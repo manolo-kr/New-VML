@@ -8,7 +8,7 @@ import dash_bootstrap_components as dbc
 GLOBAL_STORES = [
     dcc.Store(id="gs-auth", storage_type="session"),         # {"access_token": "...", "user": {...}}
     dcc.Store(id="gs-project", storage_type="session"),      # {"id": "...", "name": "..."}
-    dcc.Store(id="gs-design-state", storage_type="session"), # {"analysis_id": "...", "task_ids": [...], ...}
+    dcc.Store(id="gs-design-state", storage_type="session"), # {"analysis_id": "...", ...}
 ]
 
 def build_dash_app() -> dash.Dash:
@@ -20,9 +20,6 @@ def build_dash_app() -> dash.Dash:
         external_stylesheets=[dbc.themes.BOOTSTRAP],
         title="Visual ML",
     )
-
-    # ✅ 중복 콜백 허용 + 초기 호출 충돌 방지(전역)
-    app.config.prevent_initial_callbacks = "initial_duplicate"
 
     app.layout = dbc.Container([
         dcc.Location(id="_page_location"),
