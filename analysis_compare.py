@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 from typing import List, Dict, Any
-import json
 import urllib.parse as up
 
 import dash
@@ -13,100 +12,107 @@ from app.ui.clients import api_client as api
 
 dash.register_page(__name__, path="/analysis/compare", name="Compare")
 
+# -----------------------
+# helpers
+# -----------------------
+KEY_METRICS = ["accuracy", "auc", "roc_auc", "f1", "precision", "recall", "logloss", "rmse", "mae", "mape"]
+
+def _metric_pick(m: Dict[str, Any]) -> Dict[str, Any]:
+    out = {}
+    for k in KEY_METRICS:
+        if k in m:
+            v = m.get(k)
+            try:
+                if isinstance(v, (int, float)):
+                    out[k] = f"{v:.6g}"
+                else:
+                    out[k] = str(v)
+            except Exception:
+                out[k] = str(v)
+    return out
+
+def _render_table(rows: List[Dict[str, Any]]) -> html.Div:
+    if not rows:
+        return dbc.Alert("No runs to compare. Enter run IDs and click Load.", color="light", className="py-2")
+    # header
+    cols = ["Run ID", "Model", "Type", "File", "Status"] + KEY_METRICS
+    thead = html.Thead(html.Tr([html.Th(c) for c in cols]))
+    tb_rows = []
+    for r in rows:
+        cells = [
+            html.Td(html.Code(r.get("id","-"))),
+            html.Td(r.get("model","-")),
+            html.Td(r.get("task_type","-")),
+            html.Td(r.get("file","-")),
+            html.Td(r.get("status","-")),
+        ]
+        for k in KEY_METRICS:
+            cells.append(html.Td(r.get(k, "-")))
+        tb_rows.append(html.Tr(cells))
+    return dbc.Table([thead, html.Tbody(tb_rows)], bordered=True, hover=True, responsive=True, className="align-middle")
+
+# -----------------------
+# layout
+# -----------------------
 layout = dbc.Container([
     dcc.Location(id="compare-url"),
-    dcc.Store(id="compare-run-ids"),
-    dcc.Store(id="compare-models"),
 
-    html.H2("Compare runs"),
+    html.H2("Analysis - Compare"),
 
-    dbc.Row([
-        dbc.Col(dbc.InputGroup([
-            dbc.InputGroupText("Run IDs (comma)"),
-            dbc.Input(id="compare-input-ids", placeholder="rid1,rid2,..."),
-            dbc.Button("Load", id="compare-load", color="primary")
-        ]), md=8),
-        dbc.Col(dbc.InputGroup([
-            dbc.InputGroupText("Model (optional)"),
-            dbc.Input(id="compare-input-model", placeholder="xgboost"),
-        ]), md=4),
-    ], className="g-2 mb-3"),
+    dbc.Card([
+        dbc.CardHeader("Select runs"),
+        dbc.CardBody([
+            dbc.Row([
+                dbc.Col(dbc.Textarea(id="compare-run-ids", placeholder="Enter run IDs separated by commas", rows=3), md=7),
+                dbc.Col(dbc.Button("Load", id="btn-compare-load", color="primary"), md="auto"),
+            ], className="g-2"),
+            html.Small("Tip: You can paste a list like: 64f2...,7d09...,a321...", className="text-muted")
+        ])
+    ], className="mb-3"),
 
     html.Div(id="compare-table"),
 ], fluid=True)
 
+# -----------------------
+# callbacks
+# -----------------------
+
+# 1) URL → run_ids 초기화 (?runs=id1,id2,...)
 @callback(
-    Output("compare-run-ids","data"),
-    Output("compare-models","data"),
-    Input("compare-url","href"),
+    Output("compare-run-ids", "value"),
+    Input("compare-url", "href"),
     prevent_initial_call=False
 )
 def _init_from_url(href):
     if not href:
-        return [], None
+        return ""
     q = up.urlparse(href).query
     params = dict(up.parse_qsl(q, keep_blank_values=True))
-    rids = [r for r in (params.get("run_ids") or "").split(",") if r]
-    model = params.get("model")
-    return rids, model
+    runs = params.get("runs") or ""
+    return runs
 
+# 2) Load → 비교 테이블 작성
 @callback(
-    Output("compare-run-ids","data", allow_duplicate=True),
-    Output("compare-models","data", allow_duplicate=True),
-    Input("compare-load","n_clicks"),
-    State("compare-input-ids","value"),
-    State("compare-input-model","value"),
+    Output("compare-table", "children"),
+    Input("btn-compare-load", "n_clicks"),
+    State("compare-run-ids", "value"),
     prevent_initial_call=True
 )
-def _manual(n, ids, model):
-    if not ids:
-        return no_update, no_update
-    rids = [r.strip() for r in ids.split(",") if r.strip()]
-    return rids, (model or "").strip() or None
-
-@callback(
-    Output("compare-table","children"),
-    Input("compare-run-ids","data"),
-    Input("compare-models","data"),
-)
-def _render_table(run_ids, model_key):
-    run_ids = run_ids or []
-    if not run_ids:
-        return dbc.Alert("Enter run ids to compare.", color="secondary")
-
+def _load_compare(_n, raw):
+    run_ids = [r.strip() for r in (raw or "").split(",") if r.strip()]
     rows = []
-    header = html.Thead(html.Tr([
-        html.Th("Run ID"),
-        html.Th("Model"),
-        html.Th("Metric (AUC/F1/RMSE)"),
-        html.Th("Status"),
-        html.Th("Open"),
-    ]))
-
     for rid in run_ids:
         try:
             info = api.get_run(rid)
         except Exception:
-            info = {}
-        tf = (info.get("task_ref") or {})
-        model = model_key or tf.get("model_family") or "-"
+            continue
+        task_ref = info.get("task_ref") or {}
+        model = task_ref.get("model_family") or "-"
+        ttype = task_ref.get("task_type") or "-"
+        fname = info.get("dataset_original_name") or "-"
         status = info.get("status") or "-"
-        # 간단히 auc/f1/rmse 중 존재하는 것 하나 선택
-        metric_show = "-"
-        try:
-            m = api.get_artifact_json(rid, f"models/{model}/metrics/metrics.json")
-            for k in ["auc","f1","rmse","mae","accuracy"]:
-                if k in m:
-                    metric_show = f"{k}: {m[k]}"
-                    break
-        except Exception:
-            pass
-        open_link = dcc.Link("Results", href=f"/analysis/results?run_id={rid}&model={model}")
-        rows.append(html.Tr([
-            html.Td(rid),
-            html.Td(model),
-            html.Td(metric_show),
-            html.Td(status),
-            html.Td(open_link),
-        ]))
-    return dbc.Table([header, html.Tbody(rows)], bordered=True, hover=True, responsive=True)
+        metrics = info.get("metrics") or {}
+        picks = _metric_pick(metrics)
+        row = {"id": rid, "model": model, "task_type": ttype, "file": fname, "status": status, **picks}
+        rows.append(row)
+    return _render_table(rows)
