@@ -1,150 +1,133 @@
 # backend/app/ui/app.py
 
-from pathlib import Path
 import dash
 from dash import dcc, html, callback, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
 
-# 전역 Store: 로그인 상태, 현재 프로젝트, 디자인 상태 등
+# 프런트 API 클라이언트(토큰 주입용)
+from app.ui.clients import api_client as api
+
+# ─────────────────────────────────────────────────────────────
+# 전역 Store 정의 (세션 스토리지)
+# ─────────────────────────────────────────────────────────────
 GLOBAL_STORES = [
-    dcc.Store(id="gs-auth", storage_type="session"),          # {"access_token": "...", "user": {...}}
-    dcc.Store(id="gs-project", storage_type="session"),       # {"id": "...", "name": "..."}
-    dcc.Store(id="gs-design-state", storage_type="session"),  # {"analysis_id": "...", ...}
+    # 로그인 상태: {"access_token": "...", "user": {"username": "...", "ip": "..."}}
+    dcc.Store(id="gs-auth", storage_type="session"),
+    # 현재 프로젝트: {"id": "...", "name": "..."}
+    dcc.Store(id="gs-project", storage_type="session"),
+    # 디자인/선택 상태 등: {"analysis_id": "...", ...}
+    dcc.Store(id="gs-design-state", storage_type="session"),
 ]
 
-# pages 디렉토리 경로를 명시적으로 지정 (이 파일 기준 app/ui/pages)
-_PAGES_DIR = str((Path(__file__).resolve().parent / "pages").as_posix())
+def _navbar():
+    """상단 네비게이션 바 (우측에 사용자/아이피/로그아웃)"""
+    return dbc.Navbar(
+        dbc.Container([
+            dbc.NavbarBrand("Visual ML", href="/"),
+            dbc.Nav([
+                dbc.NavItem(dcc.Link("Home", className="nav-link", href="/")),
+                dbc.NavItem(dcc.Link("Design", className="nav-link", href="/analysis/design")),
+                dbc.NavItem(dcc.Link("Train", className="nav-link", href="/analysis/train")),
+                dbc.NavItem(dcc.Link("Results", className="nav-link", href="/analysis/results")),
+                dbc.NavItem(dcc.Link("Compare", className="nav-link", href="/analysis/compare")),
+            ], className="me-auto", navbar=True),
+
+            # 우측: 사용자/아이피 배지 + 로그아웃 링크
+            dbc.NavbarText([
+                html.Span("User: "), dbc.Badge("-", id="nav-user-badge", color="info", className="me-2"),
+                html.Span("IP: "), dbc.Badge("-", id="nav-ip-badge", color="secondary", className="me-3"),
+                # FastAPI에 /auth/logout 라우트가 있으므로 단순 링크로 처리(콜백 없음 → 중복 위험 제거)
+                html.A("Logout", href="/auth/logout", className="btn btn-outline-light btn-sm"),
+            ]),
+        ], fluid=True),
+        color="dark",
+        dark=True,
+        sticky="top",
+        className="mb-3",
+    )
+
 
 def build_dash_app() -> dash.Dash:
-    """Dash 앱 팩토리"""
+    """Dash 앱 팩토리 (use_pages=True / Navbar / 전역 Store / 인증 동기화 콜백)"""
     app = dash.Dash(
         __name__,
         use_pages=True,
-        pages_folder=_PAGES_DIR,              # ✅ 명시적으로 지정
         suppress_callback_exceptions=True,
         external_stylesheets=[dbc.themes.BOOTSTRAP],
         title="Visual ML",
     )
 
-    # 로그인 페이지는 pages 폴더 밖(app/ui/auth)에 있으므로, 앱 생성 "후" import하여 register_page 실행
-    from app.ui.auth import login as _login  # noqa: F401
-
-    navbar = dbc.Navbar(
-        dbc.Container([
-            html.A(
-                dbc.NavbarBrand("Visual ML", className="me-3"),
-                href="/",
-                className="navbar-brand-link",
-            ),
-            dbc.Nav(
-                [
-                    dbc.NavItem(dcc.Link("Home", href="/", className="nav-link")),
-                    dbc.NavItem(dcc.Link("Design", href="/analysis/design", className="nav-link")),
-                    dbc.NavItem(dcc.Link("Train", href="/analysis/train", className="nav-link")),
-                    dbc.NavItem(dcc.Link("Results", href="/analysis/results", className="nav-link")),
-                    dbc.NavItem(dcc.Link("Compare", href="/analysis/compare", className="nav-link")),
-                ],
-                className="me-auto",
-                navbar=True,
-            ),
-            # 우측: 사용자/아이피/로그아웃/연장
-            dbc.Nav(
-                [
-                    html.Span(id="nav-user-badge", className="me-2"),
-                    html.Span(id="nav-ip-badge", className="me-2"),
-                    dbc.Button("Extend 10 min", id="nav-extend", size="sm", color="secondary", className="me-2"),
-                    dbc.Button("Logout", id="nav-logout", size="sm", color="danger", outline=True),
-                ],
-                navbar=True,
-            ),
-        ]),
-        color="dark",
-        dark=True,
-        className="mb-3",
-    )
-
+    # 페이지 컨테이너 + 인증용 리디렉션 Location
     app.layout = dbc.Container([
+        # 현재 페이지 경로
         dcc.Location(id="_page_location"),
-        dcc.Store(id="_page_store"),
-        *GLOBAL_STORES,
 
-        navbar,
-
-        # 로그인/리디렉트/토큰 동기화용 보조 컴포넌트
+        # 인증 리디렉트 전용 Location (href를 콜백에서 갱신)
         dcc.Location(id="_auth_redirect"),
-        dcc.Interval(id="_auth_heartbeat", interval=60_000, disabled=False),  # 60초마다 토큰 체크/연장 신호에 사용 가능
+
+        # 내부 메시지(디버깅/상태표시용, 화면에 노출 X)
         html.Div(id="_auth_message", style={"display": "none"}),
 
-        dash.page_container
+        *_hide_on_pure_api_clients(GLOBAL_STORES),
+
+        _navbar(),
+
+        # 페이지 컨테이너
+        dash.page_container,
     ], fluid=True)
 
-    # -----------------------------
-    # 공통 콜백들
-    # -----------------------------
-    from app.ui.clients import api_client as api
-
-    # 1) gs-auth 변경 → api_client에 토큰 주입 + 우측 뱃지 렌더 + (미로그인 시 /auth/login 리디렉트)
+    # ─────────────────────────────────────────────────────────
+    # 인증 동기화 콜백
+    # - gs-auth가 없으면 /auth/login 으로 1회만 리디렉션
+    # - 이미 /auth/login에 있다면 추가 리디렉션 없음(루프 방지)
+    # - 토큰을 api_client에 주입하여 이후 모든 API 호출에 Bearer 삽입
+    # - 네비게이션 배지(유저/아이피) 렌더
+    # ─────────────────────────────────────────────────────────
     @callback(
         Output("_auth_message", "children"),
         Output("_auth_redirect", "href"),
         Output("nav-user-badge", "children"),
         Output("nav-ip-badge", "children"),
         Input("gs-auth", "data"),
-        State("_page_location", "href"),
+        State("_page_location", "pathname"),
         prevent_initial_call=False
     )
-    def _sync_auth(gs_auth, href):
+    def _sync_auth(gs_auth, pathname):
         token = None
         username = "-"
         ip = "-"
 
-        if gs_auth and isinstance(gs_auth, dict):
+        if isinstance(gs_auth, dict):
             token = gs_auth.get("access_token")
             user = gs_auth.get("user") or {}
             username = user.get("username") or "-"
             ip = user.get("ip") or "-"
 
-        # api_client 에 토큰 주입
+        # 프런트 API 클라이언트에 토큰 주입 (없으면 None으로 초기화)
         try:
             api.set_bearer_token(token)
         except Exception:
             pass
 
-        # 표시용 뱃지
-        user_badge = dbc.Badge(username, color="info")
-        ip_badge = dbc.Badge(ip, color="secondary")
-
-        # 미로그인 → 로그인 페이지로
+        # 인증되지 않았고, 지금 위치가 로그인 페이지가 아니면 로그인으로 이동
         if not token:
-            # next 파라미터로 현재 위치 전달
-            next_href = "/"
-            if href:
-                next_href = href
-            return "no-auth", f"/auth/login?next={next_href}", user_badge, ip_badge
+            if pathname != "/auth/login":
+                # next 파라미터로 현재 경로를 넘겨 로그인 후 원위치
+                next_path = pathname or "/"
+                return "no-auth", f"/auth/login?next={next_path}", username, ip
+            else:
+                # 이미 로그인 페이지면 추가 리디렉트 안 함(루프 방지)
+                return "no-auth", no_update, username, ip
 
-        # 로그인 상태 유지
-        return "ok", dash.no_update, user_badge, ip_badge
-
-    # 2) Logout 버튼 → gs-auth 초기화(=미로그인 상태로 전환되어 위 콜백이 /auth/login으로 보냄)
-    @callback(
-        Output("gs-auth", "data", allow_duplicate=True),
-        Input("nav-logout", "n_clicks"),
-        prevent_initial_call=True
-    )
-    def _logout(n):
-        if not n:
-            return no_update
-        return None
-
-    # 3) Extend 버튼(10분 연장 UI 신호만) — 실제 토큰 refresh는 필요시 별도 구현
-    @callback(
-        Output("_auth_message", "children", allow_duplicate=True),
-        Input("nav-extend", "n_clicks"),
-        prevent_initial_call=True
-    )
-    def _extend(n):
-        if not n:
-            return no_update
-        return "extend"
+        # 인증 상태 OK
+        return "ok", no_update, username, ip
 
     return app
+
+
+def _hide_on_pure_api_clients(stores):
+    """
+    (옵션) API-only 클라이언트에서 Store 생성이 문제 될 때를 대비한 헬퍼.
+    지금은 그대로 반환.
+    """
+    return stores
