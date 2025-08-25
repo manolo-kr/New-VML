@@ -1,0 +1,76 @@
+-- 1) analysis: 원본 파일명 컬럼 추가 + 과거 오타에서 데이터 이관
+ALTER TABLE analysis
+  ADD COLUMN IF NOT EXISTS dataset_original_name TEXT;
+
+-- 과거 오타 컬럼에서 값이 있으면 복사 (오타 컬럼이 있을 때만)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='analysis' AND column_name='dataset_orinial_name'
+  ) THEN
+    EXECUTE $mig$
+      UPDATE analysis
+      SET dataset_original_name = COALESCE(dataset_original_name, dataset_orinial_name)
+      WHERE dataset_orinial_name IS NOT NULL
+        AND (dataset_original_name IS NULL OR dataset_original_name = '');
+    $mig$;
+  END IF;
+END
+$$;
+
+-- 오타 컬럼 있으면 제거(선택)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='analysis' AND column_name='dataset_orinial_name'
+  ) THEN
+    EXECUTE 'ALTER TABLE analysis DROP COLUMN dataset_orinial_name;';
+  END IF;
+END
+$$;
+
+-- 2) ml_task: status 컬럼 추가
+ALTER TABLE ml_task
+  ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ready';
+
+-- 3) ml_task: split/model_params 를 JSONB로 강제 (기존 타입이 TEXT여도 안전 변환)
+ALTER TABLE ml_task
+  ALTER COLUMN split TYPE jsonb
+  USING COALESCE(
+    CASE
+      WHEN split IS NULL THEN NULL
+      WHEN pg_typeof(split)::text = 'jsonb' THEN split
+      WHEN pg_typeof(split)::text = 'json'  THEN split::jsonb
+      WHEN split::text ~ '^\s*[\{\[]' THEN split::jsonb
+      ELSE '{}'::jsonb
+    END,
+    '{}'::jsonb
+  );
+
+ALTER TABLE ml_task
+  ALTER COLUMN model_params TYPE jsonb
+  USING COALESCE(
+    CASE
+      WHEN model_params IS NULL THEN NULL
+      WHEN pg_typeof(model_params)::text = 'jsonb' THEN model_params
+      WHEN pg_typeof(model_params)::text = 'json'  THEN model_params::jsonb
+      WHEN model_params::text ~ '^\s*[\{\[]' THEN model_params::jsonb
+      ELSE '{}'::jsonb
+    END,
+    '{}'::jsonb
+  );
+
+-- 4) users 테이블 (로그인/권한)
+CREATE TABLE IF NOT EXISTS users (
+  id               TEXT PRIMARY KEY,
+  username         TEXT NOT NULL UNIQUE,
+  password_hash    TEXT NOT NULL,
+  role             TEXT NOT NULL DEFAULT 'user',  -- 'admin' | 'user'
+  created_at       TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+-- (선택) 기본 인덱스
+CREATE INDEX IF NOT EXISTS idx_ml_task_analysis_id ON ml_task(analysis_id);
+CREATE INDEX IF NOT EXISTS idx_analysis_project_id ON analysis(project_id);
