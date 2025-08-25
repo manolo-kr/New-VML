@@ -14,20 +14,7 @@ _jobs = _db[settings.MONGO_COLLECTION]
 def ensure_indexes() -> None:
     _jobs.create_index([("status", ASCENDING), ("task_ref.task_id", ASCENDING)])
     _jobs.create_index([("idempotency_key", ASCENDING)], unique=True, sparse=True)
-
-def create_job(payload: Dict[str, Any]) -> str:
-    now = datetime.utcnow()
-    doc = {
-        **payload,
-        "status": payload.get("status", "queued"),
-        "worker_id": payload.get("worker_id"),
-        "progress": float(payload.get("progress", 0.0)),
-        "message": payload.get("message", ""),
-        "created_at": now,
-        "updated_at": now,
-    }
-    ins = _jobs.insert_one(doc)
-    return str(ins.inserted_id)
+    _jobs.create_index([("task_ref.user_id", ASCENDING), ("status", ASCENDING)])
 
 def get_job(job_id: str) -> Optional[Dict[str, Any]]:
     try:
@@ -46,12 +33,12 @@ def get_active_job_by_task(task_id: str) -> Optional[Dict[str, Any]]:
         "status": {"$in": ["queued", "running"]},
     })
 
-def create_job_idempotent(payload: Dict[str, Any], idempotency_key: Optional[str]=None, force: bool=False) -> str:
-    task_id = (payload.get("task_ref") or {}).get("task_id")
-    if not force and task_id:
-        active = get_active_job_by_task(task_id)
-        if active:
-            return str(active["_id"])
+def create_job_idempotent(payload: Dict[str, Any], idempotency_key: Optional[str] = None, force: bool = False) -> str:
+    if not force and payload.get("task_ref", {}).get("task_id"):
+        found = get_active_job_by_task(payload["task_ref"]["task_id"])
+        if found:
+            return str(found["_id"])
+
     if idempotency_key:
         prev = _jobs.find_one({"idempotency_key": idempotency_key})
         if prev:
@@ -61,12 +48,18 @@ def create_job_idempotent(payload: Dict[str, Any], idempotency_key: Optional[str
     doc = {
         **payload,
         "status": payload.get("status", "queued"),
-        "worker_id": payload.get("worker_id"),
+        "worker_id": payload.get("worker_id", None),
         "progress": float(payload.get("progress", 0.0)),
         "message": payload.get("message", ""),
         "idempotency_key": idempotency_key or None,
         "created_at": now,
         "updated_at": now,
     }
-    r = _jobs.insert_one(doc)
-    return str(r.inserted_id)
+    ins = _jobs.insert_one(doc)
+    return str(ins.inserted_id)
+
+def count_active_jobs_global() -> int:
+    return _jobs.count_documents({"status": {"$in": ["queued", "running"]}})
+
+def count_active_jobs_by_user(user_id: str) -> int:
+    return _jobs.count_documents({"status": {"$in": ["queued", "running"]}, "task_ref.user_id": user_id})
