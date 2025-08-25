@@ -36,9 +36,10 @@ def build_dash_app() -> dash.Dash:
     app.layout = dbc.Container(
         [
             # 라우팅/리다이렉트용
-            dcc.Location(id="_router"),              # 현재 URL
-            dcc.Location(id="_auth_redirect"),       # 가드 리다이렉트 전용
-            dcc.Location(id="_logout_redirect"),     # 로그아웃 리다이렉트 전용(중복 방지)
+            dcc.Location(id="_router"),                 # 현재 URL
+            dcc.Location(id="_auth_redirect"),          # 가드 리다이렉트 전용
+            dcc.Location(id="_logout_redirect"),        # 로그아웃 리다이렉트 전용
+            dcc.Location(id="_legacy_login_redirect"),  # ← 레거시 /login → /auth/login 변환용
             html.Div(id="_guard_msg", style={"display": "none"}),
 
             # 전역 상태
@@ -89,6 +90,22 @@ def build_dash_app() -> dash.Dash:
     )
 
     # -------------------------------
+    # 레거시 경로 호환: /login → /auth/login
+    # -------------------------------
+    @callback(
+        Output("_legacy_login_redirect", "href"),
+        Input("_router", "pathname"),
+        State("_router", "search"),
+        prevent_initial_call=False,
+    )
+    def _legacy_redirect(pathname, search):
+        if pathname == "/login" or (pathname and pathname.startswith("/login")):
+            qs = search or ""
+            # 예: /login?next=/analysis → /auth/login?next=/analysis
+            return f"/auth/login{qs}"
+        return no_update
+
+    # -------------------------------
     # 전역 가드: 로그인 안했으면 /auth/login 로 보냄
     # -------------------------------
     @callback(
@@ -99,8 +116,10 @@ def build_dash_app() -> dash.Dash:
         prevent_initial_call=False,
     )
     def _guard(pathname, auth):
+        # 이미 로그인 페이지면 패스
         if pathname and pathname.startswith("/auth/login"):
             return no_update, "on login page"
+        # 비로그인 → 로그인으로
         has_token = bool(auth and auth.get("access_token"))
         if not has_token:
             target = f"/auth/login?next={pathname or '/'}"
@@ -120,7 +139,6 @@ def build_dash_app() -> dash.Dash:
 
     # -------------------------------
     # 클라이언트 로그아웃
-    #   - allow_duplicate=True: 다른 콜백도 gs-auth.data를 만질 수 있음(로그인/연장)
     # -------------------------------
     @callback(
         Output("gs-auth", "data", allow_duplicate=True),
@@ -134,8 +152,7 @@ def build_dash_app() -> dash.Dash:
         return {}, "/auth/login?logged_out=1"
 
     # -------------------------------
-    # 세션 연장 (10분): /auth/refresh → gs-auth 갱신 + 토스트
-    #   - allow_duplicate=True: 로그인/로그아웃과 동시에 같은 Store를 만져도 OK
+    # 세션 연장 (10분)
     # -------------------------------
     @callback(
         Output("gs-auth", "data", allow_duplicate=True),
