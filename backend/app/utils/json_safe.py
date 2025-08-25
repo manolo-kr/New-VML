@@ -1,14 +1,14 @@
 # backend/app/utils/json_safe.py
 
 """
-JSON 직렬화 안전 헬퍼
+JSON 직렬화 안전 헬퍼 (원본 요구사항 재반영)
 - NaN, +Inf, -Inf -> None
 - numpy/pandas/native 혼합 타입을 재귀적으로 처리
 - datetime -> ISO8601
 - DataFrame 미리보기 편의 함수 제공
 """
 from __future__ import annotations
-from typing import Any, Iterable, Mapping, List, Dict
+from typing import Any, List, Dict
 import math
 import numpy as np
 import pandas as pd
@@ -17,13 +17,13 @@ from decimal import Decimal
 
 Finite = (int, float, np.integer, np.floating)
 
-
 def _finite_or_none(x: Any) -> Any:
     if isinstance(x, Finite):
         xf = float(x)
-        return xf if math.isfinite(xf) else None
+        if math.isfinite(xf):
+            return xf
+        return None
     return x
-
 
 def _to_builtin(x: Any) -> Any:
     if isinstance(x, (np.integer,)):
@@ -38,7 +38,6 @@ def _to_builtin(x: Any) -> Any:
         return x.isoformat()
     return x
 
-
 def json_safe(obj: Any) -> Any:
     if obj is None or isinstance(obj, (str, bytes)):
         return obj
@@ -50,7 +49,7 @@ def json_safe(obj: Any) -> Any:
         return None
     if isinstance(obj, (pd.Timestamp, pd.Timedelta)):
         return str(obj)
-    if isinstance(obj, Mapping):
+    if isinstance(obj, dict):
         return {str(k): json_safe(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple, set)):
         return [json_safe(v) for v in obj]
@@ -67,7 +66,6 @@ def json_safe(obj: Any) -> Any:
         return str(obj)
     except Exception:
         return None
-
 
 def df_preview_safe(df: pd.DataFrame, limit: int = 50) -> Dict[str, Any]:
     head = df.head(int(limit)).copy()
