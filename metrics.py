@@ -1,16 +1,21 @@
 # backend/app/services/metrics.py
 
 from __future__ import annotations
-from typing import Dict, Any
+from typing import Dict, Any, List
 
-def safe_number(x):
-    try:
-        return float(x)
-    except Exception:
-        return None
 
-def summarize_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    워커가 남긴 메트릭 dict를 테이블/차트용으로 정리할 때 사용 (선택).
-    """
-    return {k: safe_number(v) for k, v in (metrics or {}).items()}
+def summarize_binary_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    keys = ["auc", "accuracy", "precision", "recall", "f1"]
+    return {k: metrics.get(k) for k in keys if k in metrics}
+
+
+def compare_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for r in runs:
+        row = {
+            "run_id": r.get("id"),
+            "status": r.get("status"),
+            **summarize_binary_metrics(r.get("metrics") or {})
+        }
+        out.append(row)
+    return out
