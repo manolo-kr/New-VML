@@ -1,28 +1,49 @@
 # backend/app/middleware/auth_middleware.py
 
+from __future__ import annotations
+
+import ipaddress
 from typing import Optional
+
+from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from ..config import INTERNAL_ALLOW, TRUSTED_INTERNAL_IPS, TRUST_PROXY, FORWARDED_FOR_HEADER
+
+from ..config import BYPASS_AUTH_INTERNAL
+from ..services.auth_utils import decode_access_token
+
+
+def _is_private_ip(ip: Optional[str]) -> bool:
+    try:
+        if not ip:
+            return False
+        ip_obj = ipaddress.ip_address(ip)
+        return ip_obj.is_private or ip_obj.is_loopback
+    except Exception:
+        return False
+
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """
-    내부 요청(신뢰 IP)은 인증 우회: request.state.user = {"id":"internal"} 로 표시
-    외부 요청은 현재 별도 검증 없음(필요시 확장 가능)
-    """
     async def dispatch(self, request: Request, call_next):
-        client_ip = self._get_client_ip(request)
-        if INTERNAL_ALLOW and client_ip in TRUSTED_INTERNAL_IPS:
-            request.state.user = {"id": "internal", "role": "system"}
+        # 내부 IP이면 토큰 없어도 통과(옵션)
+        if BYPASS_AUTH_INTERNAL and _is_private_ip(request.client.host):
+            request.state.user = {"id": "internal", "email": "internal@local", "role": "admin", "name": "internal"}
             return await call_next(request)
-        # 외부는 통과(보안 강화 필요 시 여기서 토큰 검증 추가)
-        return await call_next(request)
 
-    def _get_client_ip(self, request: Request) -> str:
-        if TRUST_PROXY:
-            hdr = request.headers.get(FORWARDED_FOR_HEADER)
-            if hdr:
-                first = hdr.split(",")[0].strip()
-                if first:
-                    return first
-        return request.client.host if request.client else ""
+        # Authorization: Bearer <token>
+        auth = request.headers.get("authorization") or request.headers.get("Authorization")
+        if auth and auth.lower().startswith("bearer "):
+            token = auth.split(" ", 1)[1].strip()
+            try:
+                payload = decode_access_token(token)
+                request.state.user = {
+                    "id": payload.get("sub"),
+                    "email": payload.get("email"),
+                    "name": payload.get("name"),
+                    "role": payload.get("role", "user"),
+                }
+            except Exception:
+                request.state.user = None
+        else:
+            request.state.user = None
+
+        return await call_next(request)
