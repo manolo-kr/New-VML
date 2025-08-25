@@ -1,57 +1,29 @@
 # backend/app/services/auth_utils.py
 
 from __future__ import annotations
-import time
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple, Dict, Any
-import bcrypt
-import jwt
-
-from ..config import JWT_SECRET, JWT_ALG, ACCESS_TOKEN_MIN, REFRESH_TOKEN_MIN
+from typing import Optional, Dict, Any
+from datetime import datetime, timedelta
+import bcrypt, jwt
+from app.config import settings
 
 
-def hash_password(plain: str) -> str:
-    return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+def hash_password(plaintext: str) -> str:
+    return bcrypt.hashpw(plaintext.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
-def verify_password(plain: str, hashed: str) -> bool:
+def verify_password(plaintext: str, hashed: str) -> bool:
     try:
-        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+        return bcrypt.checkpw(plaintext.encode("utf-8"), hashed.encode("utf-8"))
     except Exception:
         return False
 
 
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def create_access_token(sub: str, extra: Optional[Dict[str, Any]] = None) -> Tuple[str, int]:
-    exp = _now_utc() + timedelta(minutes=ACCESS_TOKEN_MIN)
-    payload = {
-        "sub": sub,
-        "typ": "access",
-        "iat": int(time.time()),
-        "exp": int(exp.timestamp()),
-    }
-    if extra:
-        payload.update(extra)
-    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
-    return token, payload["exp"]
-
-
-def create_refresh_token(sub: str, extra: Optional[Dict[str, Any]] = None) -> Tuple[str, int]:
-    exp = _now_utc() + timedelta(minutes=REFRESH_TOKEN_MIN)
-    payload = {
-        "sub": sub,
-        "typ": "refresh",
-        "iat": int(time.time()),
-        "exp": int(exp.timestamp()),
-    }
-    if extra:
-        payload.update(extra)
-    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
-    return token, payload["exp"]
+def create_access_token(sub: str, extra: Optional[Dict[str, Any]] = None, expires_minutes: Optional[int] = None) -> str:
+    now = datetime.utcnow()
+    exp = now + timedelta(minutes=expires_minutes or settings.JWT_EXPIRE_MIN)
+    payload = {"sub": sub, "iat": now, "exp": exp, **(extra or {})}
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
 
 
 def decode_token(token: str) -> Dict[str, Any]:
-    return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALG])
