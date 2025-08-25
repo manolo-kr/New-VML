@@ -2,116 +2,73 @@
 
 from __future__ import annotations
 from typing import List, Dict, Any
-import json
 import urllib.parse as up
+import json
 
 import dash
-from dash import html, dcc, callback, Input, Output, State, no_update
+from dash import html, dcc, callback, Input, Output, State
 import dash_bootstrap_components as dbc
 
 from app.ui.clients import api_client as api
 
 dash.register_page(__name__, path="/analysis/compare", name="Compare")
 
-PREFERRED = ["auc", "accuracy", "f1", "precision", "recall", "logloss", "rmse", "mae", "r2"]
-
 layout = dbc.Container([
-    dcc.Location(id="cmp-url"),
+    dcc.Location(id="compare-url"),
+    dcc.Store(id="compare-run-ids"),
+    html.H3("Compare Runs"),
 
-    dcc.Store(id="cmp-run-ids"),
-    dcc.Store(id="cmp-data"),  # {run_id: {...raw...}}
+    dbc.Row([
+        dbc.Col(dbc.Input(id="compare-input", placeholder="Comma-separated run_ids", type="text"), md=6),
+        dbc.Col(dbc.Button("Load", id="compare-load", color="primary"), width="auto"),
+    ], className="g-2 mb-3"),
 
-    html.H2("Analysis - Compare"),
-
-    dbc.Card([
-        dbc.CardHeader("Select runs"),
-        dbc.CardBody([
-            html.P("Enter run IDs (comma or newline-separated) or use URL ?run_ids=a,b,c"),
-            dcc.Textarea(id="cmp-input", style={"width":"100%", "height":"100px"}, placeholder="e.g.\n64f...a12\n64f...b98"),
-            dbc.Button("Load Runs", id="cmp-btn-load", color="primary", className="mt-2"),
-        ])
-    ], className="mb-3"),
-
-    html.Div(id="cmp-table"),
+    html.Div(id="compare-table"),
 ], fluid=True)
 
 @callback(
-    Output("cmp-run-ids","data"),
-    Input("cmp-url","href"),
+    Output("compare-run-ids", "data"),
+    Input("compare-url", "href"),
     prevent_initial_call=False
 )
-def _init_from_url(href):
-    ids: List[str] = []
-    if href:
-        q = up.urlparse(href).query
-        params = dict(up.parse_qsl(q, keep_blank_values=True))
-        if "run_ids" in params and params["run_ids"]:
-            ids = [t.strip() for t in params["run_ids"].replace("\n", ",").split(",") if t.strip()]
-    return ids
+def _init(href):
+    if not href:
+        return []
+    q = up.urlparse(href).query
+    params = dict(up.parse_qsl(q))
+    ids = params.get("run_ids", "")
+    return [x for x in ids.split(",") if x]
 
 @callback(
-    Output("cmp-run-ids", "data", allow_duplicate=True),
-    Input("cmp-btn-load", "n_clicks"),
-    State("cmp-input", "value"),
+    Output("compare-table", "children"),
+    Input("compare-load", "n_clicks"),
+    State("compare-input", "value"),
+    State("compare-run-ids", "data"),
     prevent_initial_call=True
 )
-def _load_from_text(_n, val):
-    if not val:
-        return no_update
-    ids = [t.strip() for t in val.replace("\n", ",").split(",") if t.strip()]
-    return ids
+def _load(_n, txt, rid_list):
+    ids = [x.strip() for x in (txt or "").split(",") if x.strip()] or (rid_list or [])
+    if not ids:
+        return dbc.Alert("Enter run_ids.", color="secondary")
 
-@callback(
-    Output("cmp-data", "data"),
-    Input("cmp-run-ids", "data"),
-    prevent_initial_call=True
-)
-def _fetch_runs(ids):
-    out: Dict[str, Any] = {}
-    for rid in ids or []:
-        try:
-            out[rid] = api.get_run(rid)
-        except Exception:
-            out[rid] = {"id": rid, "status": "error", "message": "fetch failed"}
-    return out
-
-def _metric_val(metrics: Dict[str, Any], key: str) -> str:
-    if key not in metrics:
-        return "-"
-    v = metrics[key]
-    try:
-        return f"{float(v):.6g}"
-    except Exception:
-        return str(v)
-
-@callback(
-    Output("cmp-table", "children"),
-    Input("cmp-data", "data"),
-)
-def _render_table(data):
-    data = data or {}
-    if not data:
-        return dbc.Alert("No runs loaded.", color="light", className="py-2")
-
-    # 헤더(대표 메트릭)
-    cols_fixed = ["Run ID", "Model", "Type", "File", "Status"]
-    cols_metrics = PREFERRED[:]  # 순서 고정
-    header = html.Thead(html.Tr([html.Th(c) for c in cols_fixed + cols_metrics + ["Results"]]))
-
-    # 행
     rows = []
-    for rid, run in data.items():
-        task_ref = (run or {}).get("task_ref") or {}
-        model = task_ref.get("model_family") or "-"
-        ttype = task_ref.get("task_type") or "-"
-        fname = (run or {}).get("dataset_original_name") or "-"
-        status = (run or {}).get("status") or "-"
-        metrics = (run or {}).get("metrics") or {}
-        fixed = [rid, model, ttype, fname, status]
-        metric_vals = [_metric_val(metrics, k) for k in cols_metrics]
-        link = dcc.Link("Open", href=f"/analysis/results?run_id={rid}&model={model}") if rid != "-" else html.Span("-")
-        row = html.Tr([html.Td(v) for v in fixed + metric_vals] + [html.Td(link)])
-        rows.append(row)
-
-    table = dbc.Table([header, html.Tbody(rows)], bordered=True, hover=True, responsive=True, className="align-middle")
-    return html.Div(table)
+    header = html.Thead(html.Tr([html.Th(x) for x in ["Run ID", "Model", "Type", "AUC", "ACC", "F1", "Status"]]))
+    for rid in ids:
+        try:
+            info = api.get_run(rid)
+        except Exception:
+            info = {}
+        ref = info.get("task_ref") or {}
+        m = ref.get("model_family", "-")
+        t = ref.get("task_type", "-")
+        met = (info.get("metrics") or {})
+        rows.append(html.Tr([
+            html.Td(rid),
+            html.Td(m),
+            html.Td(t),
+            html.Td(met.get("auc","-")),
+            html.Td(met.get("accuracy","-")),
+            html.Td(met.get("f1","-")),
+            html.Td(info.get("status","-")),
+        ]))
+    return dbc.Table([header, html.Tbody(rows)], bordered=True, hover=True, responsive=True)
