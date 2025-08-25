@@ -1,13 +1,13 @@
 # backend/app/ui/app.py
 
 import dash
-from dash import dcc, html
+from dash import dcc, html, Input, Output, State, callback
 import dash_bootstrap_components as dbc
 
 # 전역 Store: 로그인 상태, 현재 프로젝트, 디자인 상태 등
 GLOBAL_STORES = [
-    dcc.Store(id="gs-auth", storage_type="session"),         # {"access_token": "...", "user": {...}}
-    dcc.Store(id="gs-project", storage_type="session"),      # {"id": "...", "name": "..."}
+    dcc.Store(id="gs-auth", storage_type="session"),       # {"access_token": "...", "user": {...}, "ip": "..."}
+    dcc.Store(id="gs-project", storage_type="session"),    # {"id": "...", "name": "..."}
     dcc.Store(id="gs-design-state", storage_type="session"), # {"analysis_id": "...", ...}
 ]
 
@@ -37,6 +37,7 @@ def build_dash_app() -> dash.Dash:
                 dbc.NavItem(dcc.Link("Train", href="/analysis/train", className="nav-link")),
                 dbc.NavItem(dcc.Link("Results", href="/analysis/results", className="nav-link")),
                 dbc.NavItem(dcc.Link("Compare", href="/analysis/compare", className="nav-link")),
+                dbc.NavItem(html.Div(id="navbar-user-info", className="text-white ms-3")),  # ← 사용자 정보 표시
             ]
         ),
 
@@ -44,3 +45,21 @@ def build_dash_app() -> dash.Dash:
     ], fluid=True)
 
     return app
+
+
+# ------------------------
+# Callbacks
+# ------------------------
+@callback(
+    Output("navbar-user-info", "children"),
+    Input("gs-auth", "data"),
+)
+def _update_navbar_user(auth_data):
+    """네비게이션 우측 상단 사용자 표시 (이메일 + IP)"""
+    if not auth_data:
+        return html.Span("Not logged in", className="text-muted small")
+
+    user = auth_data.get("user", {})
+    email = user.get("email", "unknown")
+    ip = auth_data.get("ip", "no-ip")
+    return html.Span(f"{email} @ {ip}", className="small fw-bold")
