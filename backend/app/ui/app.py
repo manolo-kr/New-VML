@@ -119,10 +119,11 @@ def build_dash_app() -> dash.Dash:
         return _user_badge(auth)
 
     # -------------------------------
-    # 클라이언트 로그아웃 (중복 방지: _logout_redirect 사용)
+    # 클라이언트 로그아웃
+    #   - allow_duplicate=True: 다른 콜백도 gs-auth.data를 만질 수 있음(로그인/연장)
     # -------------------------------
     @callback(
-        Output("gs-auth", "data"),
+        Output("gs-auth", "data", allow_duplicate=True),
         Output("_logout_redirect", "href"),
         Input("_btn_logout", "n_clicks"),
         prevent_initial_call=True,
@@ -133,10 +134,11 @@ def build_dash_app() -> dash.Dash:
         return {}, "/auth/login?logged_out=1"
 
     # -------------------------------
-    # 세션 연장 (10분): /auth/refresh 호출 → 토큰 갱신
+    # 세션 연장 (10분): /auth/refresh → gs-auth 갱신 + 토스트
+    #   - allow_duplicate=True: 로그인/로그아웃과 동시에 같은 Store를 만져도 OK
     # -------------------------------
     @callback(
-        Output("gs-auth", "data"),
+        Output("gs-auth", "data", allow_duplicate=True),
         Output("_extend_toast", "is_open"),
         Input("_btn_extend", "n_clicks"),
         State("gs-auth", "data"),
@@ -146,10 +148,8 @@ def build_dash_app() -> dash.Dash:
         if not n:
             return no_update, no_update
         if not auth or not auth.get("access_token"):
-            # 미로그인 상태면 아무 처리 없음
             return no_update, False
         try:
-            # api_client.refresh()는 새 access_token 및 exp 갱신값을 돌려준다고 가정
             from app.ui.clients import api_client as api
             res = api.refresh(auth.get("access_token"))
             new_auth = {
@@ -159,7 +159,6 @@ def build_dash_app() -> dash.Dash:
             }
             return new_auth, True
         except Exception:
-            # 실패 시 토스트는 띄우지 않음
             return no_update, False
 
     return app
