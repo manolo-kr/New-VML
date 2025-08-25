@@ -20,7 +20,7 @@ _layout_form = dbc.Card(
                 dbc.Input(id="_auth_password", placeholder="Password", type="password", className="mb-3"),
                 dbc.Button("Login", id="_auth_submit", color="primary", className="w-100"),
                 html.Small(
-                    "세션은 비활성 10분 후 만료됩니다. 'Extend 10m'로 연장할 수 있어요.",
+                    "세션은 비활성 10분 후 만료됩니다. 상단 우측 'Extend 10m'로 연장할 수 있어요.",
                     className="text-muted d-block mt-3",
                 ),
             ]
@@ -58,8 +58,9 @@ def _already_logged_in(auth, href):
     return next_path
 
 # 로그인 요청
+#  - allow_duplicate=True: app.py의 로그아웃/연장 콜백과 함께 gs-auth.data를 갱신해도 허용
 @callback(
-    Output("gs-auth", "data"),
+    Output("gs-auth", "data", allow_duplicate=True),
     Output("_auth_redirection", "href"),
     Output("_auth_message", "is_open"),
     Output("_auth_message", "children"),
