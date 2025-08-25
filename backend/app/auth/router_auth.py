@@ -1,22 +1,23 @@
 # backend/app/auth/router_auth.py
 
 from __future__ import annotations
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session
+from app.db import get_session
+from app.store_sql import Repo
+from app.services.auth_utils import verify_password, create_access_token
 from app.auth.schemas import LoginRequest, TokenResponse
-from app.services.auth_utils import create_access_token, verify_password, hash_password
 
-router_auth = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter()
 
-# 데모 계정(실운영에선 DB 사용자 테이블 사용)
-_USERS = {
-    "admin": hash_password("admin"),
-    "ml": hash_password("ml"),
-}
-
-@router_auth.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest):
-    h = _USERS.get(body.username)
-    if not h or not verify_password(body.password, h):
-        raise HTTPException(401, "invalid credentials")
-    token = create_access_token(sub=body.username, extra={"role": "user"})
-    return TokenResponse(access_token=token)
+@router.post("/login", response_model=TokenResponse)
+def login(body: LoginRequest, s: Session = Depends(get_session)):
+    repo = Repo(s)
+    user = repo.get_user_by_email(body.email)
+    if not user or not verify_password(body.password, user.password_hash):
+        raise HTTPException(401, "Invalid credentials")
+    token = create_access_token(
+        subject=user.id,
+        claims={"email": user.email, "role": user.role}
+    )
+    return TokenResponse(access_token=token, user={"id": user.id, "email": user.email, "name": user.name, "role": user.role})
