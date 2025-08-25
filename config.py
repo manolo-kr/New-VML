@@ -1,33 +1,48 @@
 # backend/app/config.py
 
-import os
+from __future__ import annotations
+from pydantic import BaseSettings, Field, AnyHttpUrl
+from typing import List, Optional
 
-# API base
-API_BASE = os.getenv("API_BASE", "/api")
 
-# CORS
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+class Settings(BaseSettings):
+    # ── API / CORS ────────────────────────────────────────────────
+    API_BASE: str = "/api"
+    CORS_ORIGINS: List[str] = Field(default_factory=lambda: ["*"])
 
-# Postgres
-PG_DSN = os.getenv("PG_DSN", "postgresql+psycopg2://postgres:postgres@127.0.0.1:5432/vml")
+    # ── DB (PostgreSQL) ──────────────────────────────────────────
+    # 예: postgresql+psycopg2://ml:ml@127.0.0.1:5432/vml?sslmode=disable
+    DATABASE_URL: str = "postgresql+psycopg2://ml:ml@127.0.0.1:5432/vml?sslmode=disable"
 
-# Mongo
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://127.0.0.1:27017")
-MONGO_DB = os.getenv("MONGO_DB", "vml")
-MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "jobs")
+    # ── Mongo (Queue) ────────────────────────────────────────────
+    MONGO_URI: str = "mongodb://127.0.0.1:27017"
+    MONGO_DB: str = "vml"
+    MONGO_COLLECTION: str = "jobs"
 
-# Artifacts/MLflow
-ARTIFACT_ROOT = os.getenv("ARTIFACT_ROOT", "./artifacts")
-MLFLOW_URI = os.getenv("MLFLOW_URI", "http://127.0.0.1:5000")
+    # ── MLflow ───────────────────────────────────────────────────
+    MLFLOW_URI: str = "http://127.0.0.1:5000"
 
-# JWT
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret")
-JWT_ALG = os.getenv("JWT_ALG", "HS256")
-ACCESS_TOKEN_MIN = int(os.getenv("ACCESS_TOKEN_MIN", "10"))       # 10분
-REFRESH_TOKEN_MIN = int(os.getenv("REFRESH_TOKEN_MIN", "1440"))   # 24시간
+    # ── 파일/아티팩트 루트 ───────────────────────────────────────
+    ARTIFACT_ROOT: str = "./artifacts"
 
-# Quotas (기본값: 완화)
-USER_MAX_CONCURRENT = int(os.getenv("USER_MAX_CONCURRENT", "2"))
-USER_MAX_QUEUED = int(os.getenv("USER_MAX_QUEUED", "10"))
-GLOBAL_MAX_CONCURRENT = int(os.getenv("GLOBAL_MAX_CONCURRENT", "8"))
-GLOBAL_MAX_QUEUED = int(os.getenv("GLOBAL_MAX_QUEUED", "100"))
+    # ── 인증 (JWT) ───────────────────────────────────────────────
+    JWT_SECRET: str = "change-me"
+    JWT_ALG: str = "HS256"
+    JWT_EXPIRE_MIN: int = 60
+    JWT_REFRESH_EXPIRE_MIN: int = 60 * 24 * 14
+
+    # ── UI에서 백엔드 접근용 베이스 (Dash 클라이언트에서 사용) ──
+    # 예: http://127.0.0.1:8065  (None이면 동일 오리진)
+    API_ORIGIN: Optional[AnyHttpUrl] = None
+
+    # ── 워커/큐 제한(예시) ───────────────────────────────────────
+    GLOBAL_MAX_RUNNING: int = 8
+    WORKER_RESERVE_CPU: int = 4
+    USER_MAX_CONCURRENT: int = 3
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
+
+
+settings = Settings()
