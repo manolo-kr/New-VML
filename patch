@@ -32,11 +32,11 @@ END
 $$;
 
 -- 2) ml_task: status 컬럼 추가
-ALTER TABLE ml_task
+ALTER TABLE mltask
   ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ready';
 
 -- 3) ml_task: split/model_params 를 JSONB로 강제 (기존 타입이 TEXT여도 안전 변환)
-ALTER TABLE ml_task
+ALTER TABLE mltask
   ALTER COLUMN split TYPE jsonb
   USING COALESCE(
     CASE
@@ -49,7 +49,7 @@ ALTER TABLE ml_task
     '{}'::jsonb
   );
 
-ALTER TABLE ml_task
+ALTER TABLE mltask
   ALTER COLUMN model_params TYPE jsonb
   USING COALESCE(
     CASE
