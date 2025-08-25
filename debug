@@ -1,0 +1,106 @@
+ERROR:    Traceback (most recent call last):
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py", line 3301, in raw_connection
+    return self.pool.connect()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 447, in connect
+    return _ConnectionFairy._checkout(self)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 1264, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 711, in checkout
+    rec = pool._do_get()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\impl.py", line 177, in _do_get
+    with util.safe_reraise():
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\util\langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\impl.py", line 175, in _do_get
+    return self._create_connection()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 388, in _create_connection
+    return _ConnectionRecord(self)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 673, in __init__
+    self.__connect()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 899, in __connect
+    with util.safe_reraise():
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\util\langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 895, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\create.py", line 661, in connect
+    return dialect.connect(*cargs, **cparams)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\default.py", line 629, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\psycopg2\__init__.py", line 122, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\starlette\routing.py", line 694, in lifespan
+    async with self.lifespan_context(app) as maybe_state:
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\contextlib.py", line 199, in __aenter__
+    return await anext(self.gen)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\fastapi\routing.py", line 134, in merged_lifespan
+    async with original_context(app) as maybe_original_state:
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\contextlib.py", line 199, in __aenter__
+    return await anext(self.gen)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\fastapi\routing.py", line 134, in merged_lifespan
+    async with original_context(app) as maybe_original_state:
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\starlette\routing.py", line 571, in __aenter__
+    await self._router.startup()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\starlette\routing.py", line 673, in startup
+    handler()
+  File "C:\Users\cwoh\Desktop\01. Project\03. Platform\3. Test\backend\app\main.py", line 42, in _init
+    create_db_and_tables()
+  File "C:\Users\cwoh\Desktop\01. Project\03. Platform\3. Test\backend\app\db.py", line 14, in create_db_and_tables
+    SQLModel.metadata.create_all(_engine)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\sql\schema.py", line 5924, in create_all
+    bind._run_ddl_visitor(
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py", line 3251, in _run_ddl_visitor
+    with self.begin() as conn:
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\contextlib.py", line 135, in __enter__
+    return next(self.gen)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py", line 3241, in begin
+    with self.connect() as conn:
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py", line 3277, in connect
+    return self._connection_cls(self)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py", line 145, in __init__
+    Connection._handle_dbapi_exception_noconnection(
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py", line 2440, in _handle_dbapi_exception_noconnection
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py", line 3301, in raw_connection
+    return self.pool.connect()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 447, in connect
+    return _ConnectionFairy._checkout(self)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 1264, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 711, in checkout
+    rec = pool._do_get()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\impl.py", line 177, in _do_get
+    with util.safe_reraise():
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\util\langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\impl.py", line 175, in _do_get
+    return self._create_connection()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 388, in _create_connection
+    return _ConnectionRecord(self)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 673, in __init__
+    self.__connect()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 899, in __connect
+    with util.safe_reraise():
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\util\langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 895, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\create.py", line 661, in connect
+    return dialect.connect(*cargs, **cparams)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\default.py", line 629, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\psycopg2\__init__.py", line 122, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+sqlalchemy.exc.OperationalError: (psycopg2.OperationalError)
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+
+ERROR:    Application startup failed. Exiting.
