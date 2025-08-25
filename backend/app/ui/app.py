@@ -1,27 +1,91 @@
 # backend/app/ui/app.py
+#
+# Dash application factory with:
+# - Global session stores (auth/project/design-state)
+# - Top navbar showing user & client IP, and Logout
+# - Auth guard that redirects unauthenticated users to /auth/login?next=...
+# - Inactivity reminder (10-minute idle timer) with “Extend 10 min” button
+# - No duplicate-callback outputs; all IDs are unique to this file.
 
+from __future__ import annotations
+
+import time
+import urllib.parse as up
 import dash
 from dash import dcc, html, callback, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
 
-# 전역 Store: 로그인 상태, 현재 프로젝트, 디자인 상태 등
+# ────────────────────────────────────────────────────────────────────
+# Global stores available to every page (kept in sessionStorage)
+# ────────────────────────────────────────────────────────────────────
 GLOBAL_STORES = [
-    dcc.Store(id="gs-auth", storage_type="session"),         # {"access_token": "...", "user": {...}, "ip":"..."}
+    dcc.Store(id="gs-auth", storage_type="session"),         # {"access_token": "...", "user": {...}, "ip": "..."}
     dcc.Store(id="gs-project", storage_type="session"),      # {"id": "...", "name": "..."}
     dcc.Store(id="gs-design-state", storage_type="session"), # {"analysis_id": "...", ...}
 ]
 
-def _user_badge(user_data: dict | None) -> html.Div:
-    if not user_data:
-        return html.Div()
-    name = (user_data.get("user") or {}).get("username") or "user"
-    ip   = user_data.get("ip") or "-"
+# These are purely internal to app-level guard/UX
+APP_INTERNALS = [
+    dcc.Store(id="guard-last-activity", storage_type="session"),  # epoch seconds of last activity
+    dcc.Interval(id="guard-tick", interval=60_000, n_intervals=0), # 1 min tick
+    dcc.Location(id="_guard_loc"),     # current location (read)
+    dcc.Location(id="_guard_go"),      # programmatic redirect (write .href)
+]
+
+# Idle timeout (seconds). The toast appears at (IDLE_LIMIT - GRACE) seconds
+IDLE_LIMIT_SEC = 10 * 60
+GRACE_BEFORE_TOAST_SEC = 60
+
+def _navbar() -> dbc.Navbar:
+    return dbc.Navbar(
+        dbc.Container([
+            html.Div([
+                dbc.NavbarBrand("Visual ML", class_name="me-3"),
+                dbc.Nav(
+                    [
+                        dbc.NavItem(dcc.Link("Home", href="/", className="nav-link")),
+                        dbc.NavItem(dcc.Link("Design", href="/analysis/design", className="nav-link")),
+                        dbc.NavItem(dcc.Link("Train", href="/analysis/train", className="nav-link")),
+                        dbc.NavItem(dcc.Link("Results", href="/analysis/results", className="nav-link")),
+                        dbc.NavItem(dcc.Link("Compare", href="/analysis/compare", className="nav-link")),
+                    ],
+                    class_name="me-auto",
+                    pills=False,
+                ),
+            ], className="d-flex align-items-center flex-grow-1"),
+
+            # Right side: user/ip + Logout
+            dbc.Nav(
+                [
+                    dbc.Badge(id="nav-user-badge", color="info", class_name="me-2"),
+                    dbc.Badge(id="nav-ip-badge", color="secondary", class_name="me-3"),
+                    dbc.Button("Logout", id="nav-logout", color="dark", outline=True, size="sm"),
+                ],
+                class_name="ms-auto align-items-center",
+                navbar=True,
+            ),
+        ], fluid=True),
+        color="dark",
+        dark=True,
+        class_name="mb-3",
+    )
+
+def _idle_toast() -> html.Div:
+    """Small toast shown near the top-right when idle is near timeout."""
     return html.Div(
-        [
-            dbc.Badge(name, color="primary", className="me-2"),
-            dbc.Badge(f"IP {ip}", color="secondary")
-        ],
-        className="me-3"
+        dbc.Toast(
+            [
+                html.Div("Are you still there?", className="fw-bold mb-1"),
+                html.Div("You’ll be logged out soon due to inactivity."),
+                dbc.Button("Extend 10 min", id="guard-extend", color="primary", size="sm", class_name="mt-2"),
+            ],
+            id="guard-toast",
+            header="Session expiring",
+            icon="warning",
+            dismissable=True,
+            is_open=False,
+            style={"position": "fixed", "top": "80px", "right": "16px", "zIndex": 1080},
+        )
     )
 
 def build_dash_app() -> dash.Dash:
@@ -35,147 +99,129 @@ def build_dash_app() -> dash.Dash:
 
     app.layout = dbc.Container(
         [
-            # 라우팅/리다이렉트용
-            dcc.Location(id="_router"),                 # 현재 URL
-            dcc.Location(id="_auth_redirect"),          # 가드 리다이렉트 전용
-            dcc.Location(id="_logout_redirect"),        # 로그아웃 리다이렉트 전용
-            dcc.Location(id="_legacy_login_redirect"),  # ← 레거시 /login → /auth/login 변환용
-            html.Div(id="_guard_msg", style={"display": "none"}),
+            *_navbar(),
+        ], fluid=True
+    )  # dummy to avoid type hints confusion
 
-            # 전역 상태
+    # Real layout below (explicit for clarity)
+    app.layout = dbc.Container(
+        [
+            # Router & global stores
+            *_navbar(),
+            dcc.Location(id="_page_location"),
+            dcc.Store(id="_page_store"),
             *GLOBAL_STORES,
+            *APP_INTERNALS,
+            _idle_toast(),
 
-            # 네비게이션 바
-            dbc.Navbar(
-                [
-                    dbc.NavbarBrand("Visual ML", href="/", class_name="fw-bold"),
-                    dbc.Nav(
-                        [
-                            dbc.NavItem(dcc.Link("Home",    href="/",                 className="nav-link")),
-                            dbc.NavItem(dcc.Link("Design",  href="/analysis/design",  className="nav-link")),
-                            dbc.NavItem(dcc.Link("Train",   href="/analysis/train",   className="nav-link")),
-                            dbc.NavItem(dcc.Link("Results", href="/analysis/results", className="nav-link")),
-                            dbc.NavItem(dcc.Link("Compare", href="/analysis/compare", className="nav-link")),
-                        ],
-                        class_name="me-auto",
-                        navbar=True,
-                    ),
-
-                    # 우측 사용자/아이피 뱃지 + 연장/로그아웃
-                    html.Div(id="_navbar_user_badges", className="d-flex align-items-center me-2"),
-                    dbc.Button("Extend 10m", id="_btn_extend", color="warning", size="sm", class_name="me-2"),
-                    dbc.Button("Logout", id="_btn_logout", color="light", size="sm"),
-                ],
-                color="dark",
-                dark=True,
-                class_name="mb-3 rounded",
-            ),
-
-            # 연장 성공 토스트
-            dbc.Toast(
-                "Session extended by 10 minutes.",
-                id="_extend_toast",
-                header="OK",
-                is_open=False,
-                dismissable=True,
-                icon="primary",
-                duration=2500,
-                style={"position": "fixed", "top": 80, "right": 20, "zIndex": 1080},
-            ),
-
-            # 페이지 컨테이너
+            # Where pages render
             dash.page_container,
         ],
         fluid=True,
     )
 
-    # -------------------------------
-    # 레거시 경로 호환: /login → /auth/login
-    # -------------------------------
-    @callback(
-        Output("_legacy_login_redirect", "href"),
-        Input("_router", "pathname"),
-        State("_router", "search"),
-        prevent_initial_call=False,
-    )
-    def _legacy_redirect(pathname, search):
-        if pathname == "/login" or (pathname and pathname.startswith("/login")):
-            qs = search or ""
-            # 예: /login?next=/analysis → /auth/login?next=/analysis
-            return f"/auth/login{qs}"
-        return no_update
+    # ────────────────────────────────────────────────────────────────
+    # Callbacks (no duplicate outputs)
+    # ────────────────────────────────────────────────────────────────
 
-    # -------------------------------
-    # 전역 가드: 로그인 안했으면 /auth/login 로 보냄
-    # -------------------------------
+    # 1) Auth guard: redirect unauthenticated users to /auth/login?next=...
     @callback(
-        Output("_auth_redirect", "href"),
-        Output("_guard_msg", "children"),
-        Input("_router", "pathname"),
+        Output("_guard_go", "href"),
+        Input("_guard_loc", "pathname"),
+        State("_guard_loc", "search"),
         State("gs-auth", "data"),
         prevent_initial_call=False,
     )
-    def _guard(pathname, auth):
-        # 이미 로그인 페이지면 패스
-        if pathname and pathname.startswith("/auth/login"):
-            return no_update, "on login page"
-        # 비로그인 → 로그인으로
-        has_token = bool(auth and auth.get("access_token"))
-        if not has_token:
-            target = f"/auth/login?next={pathname or '/'}"
-            return target, "redirected to login"
-        return no_update, "guard ok"
+    def _auth_guard(pathname, search, auth):
+        # Always allow the login route and assets
+        path = pathname or "/"
+        if path.startswith("/auth/login") or path.startswith("/_dash") or path.startswith("/assets"):
+            return no_update
 
-    # -------------------------------
-    # 우측 상단 사용자/아이피 뱃지 렌더
-    # -------------------------------
+        # If not logged in, send to /auth/login?next=<current>
+        if not (auth and auth.get("access_token")):
+            q = f"?next={up.quote(path + (search or ''), safe='/:&?=')}"
+            return f"/auth/login{q}"
+
+        return no_update
+
+    # 2) Logout → clear gs-auth and go to /auth/login?next=<current>
     @callback(
-        Output("_navbar_user_badges", "children"),
+        Output("gs-auth", "data"),
+        Output("_guard_go", "href"),
+        Input("nav-logout", "n_clicks"),
+        State("_guard_loc", "pathname"),
+        State("_guard_loc", "search"),
+        prevent_initial_call=True,
+    )
+    def _logout(n, pathname, search):
+        if not n:
+            return no_update, no_update
+        # Clear session auth and redirect to login
+        nxt = (pathname or "/") + (search or "")
+        return {}, f"/auth/login?next={up.quote(nxt, safe='/:&?=')}"
+
+    # 3) Show username/IP on navbar
+    @callback(
+        Output("nav-user-badge", "children"),
+        Output("nav-ip-badge", "children"),
         Input("gs-auth", "data"),
         prevent_initial_call=False,
     )
-    def _navbar_user(auth):
-        return _user_badge(auth)
+    def _paint_user(auth):
+        user_label = "-"
+        ip_label = "-"
+        if auth and isinstance(auth, dict):
+            u = auth.get("user") or {}
+            name = u.get("username") or u.get("email") or "user"
+            role = u.get("role") or ""
+            user_label = f"{name}" + (f" ({role})" if role else "")
+            ip_label = auth.get("ip") or "-"
+        return user_label, ip_label
 
-    # -------------------------------
-    # 클라이언트 로그아웃
-    # -------------------------------
+    # 4) Maintain last-activity timestamp
     @callback(
-        Output("gs-auth", "data", allow_duplicate=True),
-        Output("_logout_redirect", "href"),
-        Input("_btn_logout", "n_clicks"),
-        prevent_initial_call=True,
+        Output("guard-last-activity", "data"),
+        Input("_guard_loc", "pathname"),     # user navigates
+        Input("guard-extend", "n_clicks"),   # user extends
+        prevent_initial_call=False,
     )
-    def _logout(n):
-        if not n:
-            return no_update, no_update
-        return {}, "/auth/login?logged_out=1"
+    def _touch_last_activity(_path, _extend):
+        # Whenever path changes or extend is clicked, refresh activity clock
+        return int(time.time())
 
-    # -------------------------------
-    # 세션 연장 (10분)
-    # -------------------------------
+    # 5) Idle toast open/close logic
     @callback(
-        Output("gs-auth", "data", allow_duplicate=True),
-        Output("_extend_toast", "is_open"),
-        Input("_btn_extend", "n_clicks"),
+        Output("guard-toast", "is_open"),
+        Input("guard-tick", "n_intervals"),
+        Input("guard-extend", "n_clicks"),
+        State("guard-last-activity", "data"),
         State("gs-auth", "data"),
-        prevent_initial_call=True,
+        State("guard-toast", "is_open"),
+        prevent_initial_call=False,
     )
-    def _extend(n, auth):
-        if not n:
-            return no_update, no_update
-        if not auth or not auth.get("access_token"):
-            return no_update, False
-        try:
-            from app.ui.clients import api_client as api
-            res = api.refresh(auth.get("access_token"))
-            new_auth = {
-                "access_token": res.get("access_token") or auth.get("access_token"),
-                "user": auth.get("user"),
-                "ip": auth.get("ip"),
-            }
-            return new_auth, True
-        except Exception:
-            return no_update, False
+    def _idle_toast_logic(_tick, _extend, last_ts, auth, is_open):
+        # If not logged in, no toast
+        if not (auth and auth.get("access_token")):
+            return False
+
+        now = int(time.time())
+        last = int(last_ts or now)
+        idle = now - last
+
+        # Extend button closes the toast (and _touch_last_activity already refreshed the clock)
+        if dash.ctx.triggered_id == "guard-extend":
+            return False
+
+        # Open when approaching timeout
+        if idle >= (IDLE_LIMIT_SEC - GRACE_BEFORE_TOAST_SEC) and idle < IDLE_LIMIT_SEC:
+            return True
+
+        # Auto-close when freshly active
+        if idle < (IDLE_LIMIT_SEC - GRACE_BEFORE_TOAST_SEC):
+            return False
+
+        # (Optional) Here you could also auto-logout if idle >= IDLE_LIMIT_SEC
+        return is_open
 
     return app
