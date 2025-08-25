@@ -1,18 +1,15 @@
 # backend/app/ui/pages/analysis_design.py
 
 from __future__ import annotations
-from typing import Dict, List, Any
-import ast
-
+from typing import Any, Dict, List, Optional
 import dash
 from dash import html, dcc, callback, Input, Output, State, no_update, ALL
 import dash_bootstrap_components as dbc
-
 from app.ui.clients import api_client as api
 
 dash.register_page(__name__, path="/analysis/design", name="Analysis Design")
 
-MODEL_PRESETS = {
+MODEL_PRESETS: Dict[str, Dict[str, Any]] = {
     "xgboost:classification": {"n_estimators": 300, "max_depth": 6, "learning_rate": 0.1, "subsample": 0.8, "colsample_bytree": 0.8},
     "xgboost:regression": {"n_estimators": 300, "max_depth": 6, "learning_rate": 0.1, "subsample": 0.8, "colsample_bytree": 0.8},
     "lightgbm:classification": {"n_estimators": 400, "num_leaves": 31, "learning_rate": 0.05, "feature_fraction": 0.9},
@@ -28,7 +25,6 @@ MODEL_PRESETS = {
     "mlp:classification": {"hidden_layer_sizes": "(128, 64)", "activation": "relu", "max_iter": 300},
     "mlp:regression": {"hidden_layer_sizes": "(128, 64)", "activation": "relu", "max_iter": 300},
 }
-
 MODEL_OPTIONS = [
     {"label": "XGBoost", "value": "xgboost"},
     {"label": "LightGBM", "value": "lightgbm"},
@@ -41,7 +37,7 @@ MODEL_OPTIONS = [
     {"label": "MLP", "value": "mlp"},
 ]
 
-def _param_input(model_key: str, k: str, v):
+def _param_input(model_key: str, k: str, v: Any):
     return dbc.Col(
         dbc.InputGroup([
             dbc.InputGroupText(k),
@@ -50,35 +46,27 @@ def _param_input(model_key: str, k: str, v):
         md=4, className="mb-2"
     )
 
-def _build_params_accordion(selected_models: list[str], task_type: str):
+def _build_params_accordion(selected_models: List[str], task_type: str):
     if not selected_models:
         return html.Div(html.Small("Select one or more models above."), className="text-muted")
-
     items = []
     for m in selected_models:
         key = f"{m}:{task_type}"
         params = MODEL_PRESETS.get(key, {})
-        rows = []
-        cols_row = []
+        rows, row = [], []
         for i, (k, v) in enumerate(params.items()):
-            cols_row.append(_param_input(m, k, v))
+            row.append(_param_input(m, k, v))
             if (i + 1) % 3 == 0:
-                rows.append(dbc.Row(cols_row, className="g-2"))
-                cols_row = []
-        if cols_row:
-            rows.append(dbc.Row(cols_row, className="g-2"))
-
-        items.append(
-            dbc.AccordionItem(
-                children=rows or html.Div(html.Small("No preset parameters."), className="text-muted"),
-                title=f"{m} parameters",
-                item_id=m
-            )
-        )
-    return dbc.Accordion(children=items, start_collapsed=True, always_open=False, id="design-model-param-accordion")
-
+                rows.append(dbc.Row(row, className="g-2"))
+                row = []
+        if row:
+            rows.append(dbc.Row(row, className="g-2"))
+        items.append(dbc.AccordionItem(children=rows or html.Div(html.Small("No preset parameters."), className="text-muted"),
+                                       title=f"{m} parameters", item_id=m))
+    return dbc.Accordion(children=items, start_collapsed=True, always_open=False, id="model-param-accordion")
 
 layout = dbc.Container([
+    dcc.Location(id="design-url"),
     dcc.Store(id="design-project-id"),
     dcc.Store(id="design-analysis-id"),
     dcc.Store(id="design-dataset-uri"),
@@ -86,7 +74,7 @@ layout = dbc.Container([
     dcc.Store(id="design-features-selected"),
     dcc.Store(id="design-original-name"),
 
-    html.H3("Analysis - Design"),
+    html.H2("Analysis - Design"),
 
     dbc.Card([
         dbc.CardHeader("1) Upload dataset"),
@@ -166,7 +154,7 @@ layout = dbc.Container([
         dbc.ModalHeader(dbc.ModalTitle("Dataset Preview")),
         dbc.ModalBody(html.Div(id="design-preview-table", style={"overflowX": "auto","overflowY": "auto","maxHeight": "70vh"})),
         dbc.ModalFooter(dbc.Button("Close", id="preview-close", className="ms-auto", n_clicks=0)),
-    ], id="design-preview-modal", is_open=False, size="xl", scrollable=False, centered=True),
+    ], id="preview-modal", is_open=False, size="xl", scrollable=False, centered=True),
 
     dbc.Modal([
         dbc.ModalHeader(dbc.ModalTitle("Select Features (X)")),
@@ -185,27 +173,18 @@ layout = dbc.Container([
     ], id="feature-modal", is_open=False, size="lg", scrollable=True, centered=True),
 ], fluid=True)
 
+# 프로젝트 컨텍스트
+@callback(Output("design-project-id","data"), Input("design-url","href"))
+def _init_ctx(href):
+    import urllib.parse as up
+    pid = None
+    if href:
+        q = up.urlparse(href).query
+        params = dict(up.parse_qsl(q))
+        pid = params.get("project_id")
+    return pid or ""
 
-# ------------------ Helpers ------------------
-def _safe_parse_val(s):
-    if isinstance(s, str):
-        t = s.strip()
-        try:
-            return ast.literal_eval(t)
-        except Exception:
-            try:
-                return float(t) if ("." in t or "e" in t.lower()) else int(t)
-            except Exception:
-                return s
-    return s
-
-
-# ------------------ Callbacks ------------------
-@callback(Output("design-project-id","data"), Input("gs-project","data"))
-def _init_proj(p):
-    return (p or {}).get("id")
-
-
+# 업로드
 @callback(
     Output("design-dataset-uri", "data"),
     Output("design-original-name", "data"),
@@ -216,22 +195,22 @@ def _init_proj(p):
     prevent_initial_call=True
 )
 def _on_upload(contents, filename, auth):
+    token = (auth or {}).get("access_token")
     if not contents:
         return no_update, no_update, dbc.Badge("yet", color="warning")
-    token = (auth or {}).get("access_token")
     try:
         info = api.upload_file_from_contents(contents, filename or "uploaded.dat", token=token)
         return info["dataset_uri"], info.get("original_name"), dbc.Badge("ready", color="primary")
     except Exception:
         return no_update, no_update, dbc.Badge("fail", color="danger")
 
-
+# Preview modal
 @callback(
-    Output("design-preview-modal", "is_open"),
+    Output("preview-modal", "is_open"),
     Output("design-preview-table","children"),
     Input("design-btn-preview","n_clicks"),
     Input("preview-close","n_clicks"),
-    State("design-preview-modal","is_open"),
+    State("preview-modal","is_open"),
     State("design-dataset-uri","data"),
     State("gs-auth","data"),
     prevent_initial_call=True
@@ -251,7 +230,7 @@ def _toggle_preview(open_clicks, close_clicks, is_open, dataset_uri, auth):
         return False, no_update
     return is_open, no_update
 
-
+# 컬럼 세팅
 @callback(
     Output("design-sel-target","options"),
     Output("feature-checklist","options"),
@@ -261,15 +240,15 @@ def _toggle_preview(open_clicks, close_clicks, is_open, dataset_uri, auth):
     prevent_initial_call=True
 )
 def _fill_columns(dataset_uri, auth):
+    token = (auth or {}).get("access_token")
     if not dataset_uri:
         return [], [], None
-    token = (auth or {}).get("access_token")
     prev = api.preview_dataset(dataset_uri, 50, token=token)
     cols = prev["columns"]
     opts = [{"label": c, "value": c} for c in cols]
     return opts, opts, cols
 
-
+# Feature modal open/close
 @callback(
     Output("feature-modal","is_open"),
     Input("open-feature-modal","n_clicks"),
@@ -285,7 +264,7 @@ def _feature_modal_is_open(open_n, apply_n, is_open):
         return False
     return is_open
 
-
+# Feature select value 제어
 @callback(
     Output("feature-checklist", "value"),
     Input("feature-checklist", "options"),
@@ -299,23 +278,20 @@ def _feature_select_control(options, sel_all, clr_all, target, current):
     trig = dash.ctx.triggered_id
     opts = options or []
     all_vals = [o["value"] for o in opts]
-
-    def wo_t(vals):
-        return [v for v in vals if v != target] if target else vals
-
+    def without_target(vals): return [v for v in vals if v != target] if target else vals
     if trig == "feature-select-all":
-        return wo_t(all_vals)
+        return without_target(all_vals)
     if trig == "feature-clear-all":
         return []
     if trig == "feature-checklist":
-        return wo_t(all_vals)
+        return without_target(all_vals)
     if trig == "design-sel-target":
-        return wo_t(current or [])
+        return without_target(current or [])
     if trig == "feature-checklist":
-        return wo_t(all_vals)
+        return without_target(all_vals)
     return no_update
 
-
+# Apply → 스토어/요약
 @callback(
     Output("design-features-selected","data"),
     Output("design-feature-summary","children"),
@@ -325,15 +301,13 @@ def _feature_select_control(options, sel_all, clr_all, target, current):
     prevent_initial_call=True
 )
 def _apply_features(n_apply, target, selected):
-    selected = (selected or [])
+    selected = selected or []
     if target:
         selected = [c for c in selected if c != target]
-    summary = (html.Span("Features: (none)", className="text-muted")
-               if not selected else
-               html.Span(f"Features: {len(selected)} selected", className="text-muted"))
+    summary = html.Span("Features: (none)", className="text-muted") if not selected else html.Span(f"Features: {len(selected)} selected", className="text-muted")
     return selected, summary
 
-
+# 모델 파라미터 아코디언
 @callback(
     Output("design-model-params", "children"),
     Input("design-models", "value"),
@@ -343,7 +317,7 @@ def _render_model_params(models, task_type):
     models = models or []
     return _build_params_accordion(models, task_type or "classification")
 
-
+# 생성 버튼 활성화
 @callback(
     Output("design-btn-create","disabled"),
     Input("design-dataset-uri","data"),
@@ -352,11 +326,12 @@ def _render_model_params(models, task_type):
 def _btn_enable(uri, target):
     return not (bool(uri) and bool(target))
 
-
+# 생성: Analysis + Tasks
 @callback(
     Output("design-analysis-id","data"),
     Output("design-created-info","children"),
     Input("design-btn-create","n_clicks"),
+    State("gs-auth","data"),
     State("design-project-id","data"),
     State("design-dataset-uri","data"),
     State("design-original-name","data"),
@@ -370,15 +345,14 @@ def _btn_enable(uri, target):
     State("design-sample-cap","value"),
     State({"type":"design-param","model":ALL,"key":ALL}, "id"),
     State({"type":"design-param","model":ALL,"key":ALL}, "value"),
-    State("gs-auth","data"),
     prevent_initial_call=True
 )
-def _create_all(n, project_id, dataset_uri, original_name, target, features, task_type, model_list,
-                test_size, seed, sample_enable, sample_cap, param_ids, param_vals, auth):
-    if not (project_id and dataset_uri and target and model_list):
-        return dash.no_update, dbc.Alert("Missing project/dataset/target/models", color="danger")
-
+def _create_all(_n, auth, project_id, dataset_uri, original_name, target, features, task_type, model_list,
+                test_size, seed, sample_enable, sample_cap, param_ids, param_vals):
+    import ast
     token = (auth or {}).get("access_token")
+    if not (project_id and dataset_uri and target and model_list):
+        return no_update, dbc.Alert("Missing project/dataset/target/models", color="danger")
 
     split = {"test_size": float(test_size or 0.2), "random_state": int(seed or 42)}
     sampling = None
@@ -388,14 +362,20 @@ def _create_all(n, project_id, dataset_uri, original_name, target, features, tas
     overrides = {}
     if param_ids and param_vals:
         for pid, val in zip(param_ids, param_vals):
-            m = pid.get("model")
-            k = pid.get("key")
-            if not m or not k:
-                continue
-            overrides.setdefault(m, {})[k] = _safe_parse_val(val)
+            m = pid.get("model"); k = pid.get("key")
+            if not m or not k: continue
+            raw = val
+            if isinstance(raw, str):
+                s = raw.strip()
+                try: parsed = ast.literal_eval(s)
+                except Exception:
+                    try: parsed = float(s) if ("." in s or "e" in s.lower()) else int(s)
+                    except Exception: parsed = s
+            else:
+                parsed = raw
+            overrides.setdefault(m, {})[k] = parsed
 
-    a = api.create_analysis(project_id, "My Analysis", dataset_uri,
-                            dataset_original_name=original_name, token=token)
+    a = api.create_analysis(project_id, "My Analysis", dataset_uri, dataset_original_name=original_name, token=token)
     aid = a["id"]
 
     created = []
@@ -403,9 +383,7 @@ def _create_all(n, project_id, dataset_uri, original_name, target, features, tas
         preset_key = f"{model_family}:{task_type}"
         model_params = MODEL_PRESETS.get(preset_key, {}).copy()
         if model_family in overrides:
-            for k, v in overrides[model_family].items():
-                if v is not None and v != "":
-                    model_params[k] = v
+            model_params.update({k: v for k, v in overrides[model_family].items() if v is not None and v != ""})
 
         t = api.create_task(
             analysis_id=aid,
@@ -419,25 +397,16 @@ def _create_all(n, project_id, dataset_uri, original_name, target, features, tas
             token=token,
         )
         created.append(t)
-
-    # Train All 링크 + 각 Task의 Go to Train 링크
-    import urllib.parse as up
-    from dash import dcc
-    task_ids = ",".join([t["id"] for t in created])
-    meta = {
-        t["id"]: {
-            "model_family": t["model_family"],
-            "task_type": t["task_type"],
-            "dataset_original_name": original_name or "-"
-        } for t in created
-    }
-    meta_q = up.quote_plus(json.dumps(meta))
-
-    msg = [html.Div(f"Analysis created: {aid}"),
-           html.Div(dcc.Link("➡ Train ALL", href=f"/analysis/train?task_ids={task_ids}&meta={meta_q}"))] + [
-        html.Div([
-            f"Task: {t['id']} ({t['model_family']}, {t['task_type']}) — ",
-            dcc.Link("Go to Train →", href=f"/analysis/train?task_id={t['id']}&meta={meta_q}")
-        ]) for t in created
+    msg = [html.Div(f"Analysis created: {aid}")] + [
+        html.Div([f"Task: {t['id']} ({t['model_family']}, {t['task_type']}) — ",
+                  dcc.Link("Go to Train →", href=f"/analysis/train?task_id={t['id']}")]) for t in created
     ]
-    return aid, dbc.Alert(msg, color="success")
+    # Train All 이동 링크
+    task_ids = ",".join([t["id"] for t in created])
+    meta = {}
+    created_info = dbc.Alert([
+        html.Div(msg),
+        html.Hr(),
+        dcc.Link("Train ALL →", href=f"/analysis/train?task_ids={task_ids}"),
+    ], color="success")
+    return aid, created_info
