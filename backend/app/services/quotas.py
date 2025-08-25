@@ -1,23 +1,25 @@
 # backend/app/services/quotas.py
 
 from __future__ import annotations
-from typing import Optional
+from typing import Dict, Any
+
 from app.config import settings
-from app.queue_mongo import _jobs
+from app.queue_mongo import count_active_jobs_global, count_active_jobs_by_user
 
+def can_enqueue(user_id: str) -> Dict[str, Any]:
+    now_global = count_active_jobs_global()
+    now_user = count_active_jobs_by_user(user_id)
 
-def count_running_jobs(user_id: Optional[str] = None) -> int:
-    q = {"status": {"$in": ["queued", "running"]}}
-    if user_id:
-        q["user_id"] = user_id
-    return _jobs.count_documents(q)
+    reasons = []
+    if now_global >= settings.MAX_ACTIVE_RUNS_GLOBAL:
+        reasons.append(f"global active runs limit reached ({now_global}/{settings.MAX_ACTIVE_RUNS_GLOBAL})")
+    if now_user >= settings.MAX_ACTIVE_RUNS_PER_USER:
+        reasons.append(f"user active runs limit reached ({now_user}/{settings.MAX_ACTIVE_RUNS_PER_USER})")
 
-
-def can_enqueue(user_id: Optional[str]) -> bool:
-    # 글로벌
-    if count_running_jobs(None) >= settings.GLOBAL_MAX_RUNNING:
-        return False
-    # 유저별
-    if user_id and count_running_jobs(user_id) >= settings.USER_MAX_CONCURRENT:
-        return False
-    return True
+    return {
+        "ok": len(reasons) == 0,
+        "reasons": reasons,
+        "global_active": now_global,
+        "user_active": now_user,
+        "reserved_cpus": settings.RESERVED_CPUS,
+    }
