@@ -6,7 +6,6 @@ import base64
 import requests
 from typing import Any, Dict, List, Optional
 
-# ----- 설정 -----
 API_BASE = os.getenv("API_BASE", "/api").strip()
 API_DIR = os.getenv("API_DIR", "http://127.0.0.1:8065").strip()
 
@@ -26,7 +25,7 @@ def _url(p: str) -> str:
 
 DEFAULT_TIMEOUT = float(os.getenv("API_TIMEOUT", "30"))
 
-# ----- 모듈 전역 토큰 관리 -----
+# ----- 모듈 전역 토큰 -----
 _AUTH_TOKEN: Optional[str] = None
 
 def set_auth(token: Optional[str]) -> None:
@@ -151,16 +150,4 @@ def cancel_run(run_id: str) -> Dict[str, Any]:
     r = requests.post(_url(f"/runs/{run_id}/cancel"), headers=_headers(), timeout=DEFAULT_TIMEOUT)
     if r.status_code == 404:
         return {"ok": False, "error": "cancel endpoint not found"}
-    r.raise_for_status()
-    return r.json() if r.content else {"ok": True}
-
-# ----- Artifacts -----
-def get_artifact_json(run_id: str, name: str) -> Dict[str, Any]:
-    r = requests.get(_url(f"/runs/{run_id}/artifact"), params={"name": name}, headers=_headers(), timeout=DEFAULT_TIMEOUT)
-    r.raise_for_status()
-    return r.json()
-
-def get_artifact_file(run_id: str, name: str) -> bytes:
-    r = requests.get(_url(f"/runs/{run_id}/artifact"), params={"name": name}, headers=_headers(), timeout=DEFAULT_TIMEOUT)
-    r.raise_for_status()
-    return r.content
+    r
