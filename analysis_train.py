@@ -60,11 +60,14 @@ def _render_table(task_ids: List[str],
         st = info.get("status")
         prog = info.get("progress")
         msg = info.get("message")
+
         m = (meta or {}).get(tid, {})
         model = m.get("model_family") or (info.get("task_ref") or {}).get("model_family") or "-"
         ttype = m.get("task_type") or (info.get("task_ref") or {}).get("task_type") or "-"
         fname = m.get("dataset_original_name") or info.get("dataset_original_name") or "-"
-        res_link = (dcc.Link("Open", href=f"/analysis/results?run_id={rid}&model={model}") if rid else "-")
+
+        results_link = (dcc.Link("Open", href=f"/analysis/results?run_id={rid}") if rid else html.Span("-"))
+
         rows.append(html.Tr([
             html.Td(tid),
             html.Td(model),
@@ -74,18 +77,20 @@ def _render_table(task_ids: List[str],
             html.Td(_badge(st)),
             html.Td(f"{int((prog or 0)*100)}%" if isinstance(prog, (int, float)) else "-"),
             html.Td(msg or "-"),
-            html.Td(res_link),
+            html.Td(results_link),
         ]))
     table = dbc.Table([header, html.Tbody(rows)], bordered=True, hover=True, responsive=True, className="align-middle")
     return html.Div(table)
 
 layout = dbc.Container([
     dcc.Location(id="train-url"),
+
     dcc.Store(id="train-task-ids"),
     dcc.Store(id="train-task-meta"),
     dcc.Store(id="train-run-ids"),
     dcc.Store(id="train-status"),
     dcc.Store(id="train-busy"),
+
     dcc.Interval(id="train-poll", interval=2000, disabled=True),
 
     dbc.Row([
@@ -140,7 +145,11 @@ def _control_runs(n_start, n_cancel, task_ids, run_ids, status_map):
         now_tag = str(int(time.time()))
         for tid in task_ids:
             try:
-                resp = api.train_task(tid, hpo=None, extra={"idempotency_key": f"start:{tid}:{now_tag}", "force": True})
+                resp = api.train_task(
+                    tid,
+                    hpo=None,
+                    extra={"idempotency_key": f"start:{tid}:{now_tag}", "force": True}
+                )
                 new_rid = resp.get("run_id")
                 if new_rid:
                     run_ids[tid] = new_rid
@@ -209,6 +218,7 @@ def _render(task_ids, run_ids, status_map, meta):
     run_ids = run_ids or {}
     status_map = status_map or {}
     meta = meta or {}
+
     any_active = False
     for rid in run_ids.values():
         st = (status_map.get(rid) or {}).get("status")
@@ -216,6 +226,8 @@ def _render(task_ids, run_ids, status_map, meta):
             any_active = True
             break
     banner = (dbc.Alert("Running... polling statuses", color="info", className="py-2")
-              if any_active else dbc.Alert("Idle. Click Train All to enqueue runs.", color="secondary", className="py-2"))
+              if any_active else
+              dbc.Alert("Idle. Click Train All to enqueue runs.", color="secondary", className="py-2"))
+
     table = _render_table(task_ids, run_ids, status_map, meta)
     return banner, table
