@@ -1,49 +1,51 @@
 # backend/app/middleware/auth_middleware.py
 
 from __future__ import annotations
-
-import ipaddress
-from typing import Optional
-
-from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from typing import Optional, Dict, Any
+import re
+from ..services.auth_utils import decode_token
 
-from ..config import BYPASS_AUTH_INTERNAL
-from ..services.auth_utils import decode_access_token
-
-
-def _is_private_ip(ip: Optional[str]) -> bool:
-    try:
-        if not ip:
-            return False
-        ip_obj = ipaddress.ip_address(ip)
-        return ip_obj.is_private or ip_obj.is_loopback
-    except Exception:
-        return False
-
+PUBLIC_PATHS = [
+    r"^/auth/login$",
+    r"^/auth/refresh$",
+    r"^/auth/logout$",
+    r"^/api/docs",
+    r"^/api/openapi.json",
+    r"^/_dash-.*",
+    r"^/assets/.*",
+    r"^/$",
+]
 
 class AuthMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app):
+        super().__init__(app)
+        self._compiled = [re.compile(p) for p in PUBLIC_PATHS]
+
+    def _is_public(self, path: str) -> bool:
+        return any(r.match(path) for r in self._compiled)
+
     async def dispatch(self, request: Request, call_next):
-        # 내부 IP이면 토큰 없어도 통과(옵션)
-        if BYPASS_AUTH_INTERNAL and _is_private_ip(request.client.host):
-            request.state.user = {"id": "internal", "email": "internal@local", "role": "admin", "name": "internal"}
+        path = request.url.path
+        if self._is_public(path):
             return await call_next(request)
 
-        # Authorization: Bearer <token>
-        auth = request.headers.get("authorization") or request.headers.get("Authorization")
-        if auth and auth.lower().startswith("bearer "):
-            token = auth.split(" ", 1)[1].strip()
-            try:
-                payload = decode_access_token(token)
-                request.state.user = {
-                    "id": payload.get("sub"),
-                    "email": payload.get("email"),
-                    "name": payload.get("name"),
-                    "role": payload.get("role", "user"),
-                }
-            except Exception:
-                request.state.user = None
-        else:
-            request.state.user = None
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return JSONResponse({"detail": "missing token"}, status_code=401)
+        token = auth.split(" ", 1)[1].strip()
+        try:
+            payload: Dict[str, Any] = decode_token(token)
+        except Exception:
+            return JSONResponse({"detail": "invalid token"}, status_code=401)
 
+        if payload.get("typ") != "access":
+            return JSONResponse({"detail": "invalid token type"}, status_code=401)
+
+        request.state.user = {
+            "id": payload.get("sub"),
+            "role": payload.get("role", "user"),
+        }
         return await call_next(request)
