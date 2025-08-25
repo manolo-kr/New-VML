@@ -1,64 +1,92 @@
 # backend/app/ui/auth/login.py
-
-import os
-import requests
-from typing import Any, Dict
+import json
+import urllib.parse as up
 
 import dash
 from dash import html, dcc, callback, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
 
-dash.register_page(__name__, path="/login", name="Login")
+from app.ui.clients import api_client as api
 
-API_DIR = os.getenv("API_DIR", "http://127.0.0.1:8065").rstrip("/")
-API_BASE = os.getenv("API_BASE", "/api")
+dash.register_page(__name__, path="/auth/login", name="Login")
 
-def _card(body):
-    return dbc.Card([dbc.CardHeader("Sign in"), dbc.CardBody(body)], className="mx-auto", style={"maxWidth": "560px"})
-
-layout = dbc.Container([
-    dbc.Row([
-        dbc.Col(_card([
-            dbc.Alert(id="login-alert", color="secondary", is_open=False, className="py-2"),
-            dbc.InputGroup([
-                dbc.InputGroupText("Email"),
-                dbc.Input(id="login-email", type="email", placeholder="you@example.com"),
-            ], className="mb-2"),
-            dbc.InputGroup([
-                dbc.InputGroupText("Password"),
-                dbc.Input(id="login-password", type="password", placeholder="••••••••"),
-            ], className="mb-3"),
-            dbc.Button("Login", id="login-submit", color="primary", className="w-100"),
-            html.Div(className="mt-3 small text-muted", children="Session defaults to 10 minutes. Use the navbar to extend."),
-        ]), md=8, lg=6),
-    ], className="justify-content-center"),
-], fluid=True)
-
-@callback(
-    Output("login-alert", "children"),
-    Output("login-alert", "is_open"),
-    Output("gs-auth-inbox", "data"),   # ← 허브로 전달 (gs-auth는 허브만 씀)
-    Input("login-submit", "n_clicks"),
-    State("login-email", "value"),
-    State("login-password", "value"),
-    prevent_initial_call=True
+_layout_form = dbc.Card(
+    [
+        dbc.CardHeader("Sign in"),
+        dbc.CardBody(
+            [
+                dbc.Alert(id="_auth_message", color="info", is_open=False),
+                dbc.Input(id="_auth_username", placeholder="Username", type="text", className="mb-2"),
+                dbc.Input(id="_auth_password", placeholder="Password", type="password", className="mb-3"),
+                dbc.Button("Login", id="_auth_submit", color="primary", className="w-100"),
+                html.Small(
+                    "세션은 비활성 10분 후 만료됩니다. 활동하면 자동 연장됩니다.",
+                    className="text-muted d-block mt-3",
+                ),
+            ]
+        ),
+    ],
+    class_name="mx-auto",
+    style={"maxWidth": "420px"},
 )
-def _do_login(_n, email, password):
-    if not _n:
-        return no_update, no_update, no_update
-    if not email or not password:
-        return "Email and password required.", True, no_update
+
+layout = dbc.Container(
+    [
+        dcc.Location(id="_auth_location"),
+        dcc.Location(id="_auth_redirection"),
+        _layout_form,
+    ],
+    fluid=True,
+    class_name="py-5",
+)
+
+# 이미 로그인 상태면 next 또는 홈으로 이동
+@callback(
+    Output("_auth_redirection", "href"),
+    Input("gs-auth", "data"),
+    State("_auth_location", "href"),
+    prevent_initial_call=False,
+)
+def _already_logged_in(auth, href):
+    if not auth or not auth.get("access_token"):
+        return no_update
+    # next 파라미터 우선
+    next_path = "/"
+    if href:
+        q = up.urlparse(href).query
+        params = dict(up.parse_qsl(q, keep_blank_values=True))
+        next_path = params.get("next") or "/"
+    return next_path
+
+# 로그인 요청
+@callback(
+    Output("gs-auth", "data"),
+    Output("_auth_redirection", "href"),
+    Output("_auth_message", "is_open"),
+    Output("_auth_message", "children"),
+    Input("_auth_submit", "n_clicks"),
+    State("_auth_username", "value"),
+    State("_auth_password", "value"),
+    State("_auth_location", "href"),
+    prevent_initial_call=True,
+)
+def _do_login(n, username, password, href):
+    if not n:
+        return no_update, no_update, no_update, no_update
     try:
-        r = requests.post(f"{API_DIR}{API_BASE}/auth/login", json={"email": email, "password": password}, timeout=15)
-        if r.status_code != 200:
-            return f"Login failed: {r.text}", True, no_update
-        data: Dict[str, Any] = r.json()
+        res = api.login(username or "", password or "")
+        # 서버가 {'access_token':..., 'user':{...}, 'ip':'...'} 형식으로 응답한다고 가정
         auth = {
-            "access_token": data["access_token"],
-            "user": data.get("user"),
-            "client_ip": data.get("client_ip"),
-            "exp": data.get("exp"),
+            "access_token": res.get("access_token"),
+            "user": res.get("user"),
+            "ip": res.get("ip"),
         }
-        return "Login success. Redirecting…", True, auth
+        # next 파라미터 복원
+        next_path = "/"
+        if href:
+            q = up.urlparse(href).query
+            params = dict(up.parse_qsl(q, keep_blank_values=True))
+            next_path = params.get("next") or "/"
+        return auth, next_path, False, no_update
     except Exception as e:
-        return f"Error: {e}", True, no_update
+        return no_update, no_update, True, f"로그인 실패: {e}"
