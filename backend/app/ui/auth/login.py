@@ -1,11 +1,12 @@
 # backend/app/ui/auth/login.py
 
+import os
+import requests
 import dash
 from dash import html, dcc, callback, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
-import os
-import requests
 
+# 이 모듈은 app 인스턴스 생성 이후에 임포트되어야 합니다!
 dash.register_page(__name__, path="/auth/login", name="Login")
 
 layout = dbc.Container(
@@ -104,7 +105,6 @@ def _do_login(n, username, password, href):
         if r.status_code != 200:
             return no_update, f"Login failed: {r.text}"
         data = r.json()  # {"access_token": "...", "user": {..., "ip": "..."}}
-        # gs-auth 저장 → app.py 가드가 next로 이동시킴
         return data, None
     except Exception as e:
         return no_update, f"Login error: {e}"
