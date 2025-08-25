@@ -1,34 +1,51 @@
 # backend/app/models.py
 
-from typing import Optional, Dict, Any
-from datetime import datetime
-from sqlmodel import SQLModel, Field, Column
-from sqlalchemy import JSON
+from __future__ import annotations
 
-# Project
+from datetime import datetime
+from typing import Optional, Dict, Any
+
+from sqlmodel import SQLModel, Field, Column
+from sqlalchemy.dialects.postgresql import JSONB
+
+
+def now_utc() -> datetime:
+    return datetime.utcnow()
+
+
+# ---------- Users ----------
+class User(SQLModel, table=True):
+    id: str = Field(primary_key=True)
+    email: str = Field(index=True, unique=True)
+    name: str
+    role: str = Field(default="user")  # "user" | "admin"
+    password_hash: str
+    created_at: datetime = Field(default_factory=now_utc)
+
+
+# ---------- Projects / Analyses / Tasks ----------
 class Project(SQLModel, table=True):
     id: str = Field(primary_key=True)
     name: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_utc)
 
-# Analysis
+
 class Analysis(SQLModel, table=True):
     id: str = Field(primary_key=True)
     project_id: str = Field(index=True)
     name: str
     dataset_uri: str
-    # 철자 수정: dataset_original_name (과거 오타 호환은 Store에서 처리)
-    dataset_original_name: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    dataset_original_name: Optional[str] = None  # ← 오타 수정된 확정 컬럼명
+    created_at: datetime = Field(default_factory=now_utc)
 
-# MLTask
+
 class MLTask(SQLModel, table=True):
     id: str = Field(primary_key=True)
     analysis_id: str = Field(index=True)
     task_type: str  # "classification" | "regression"
     target: str
-    split: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    split: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
     model_family: str
-    model_params: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    model_params: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
     status: str = Field(default="ready")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_utc)
