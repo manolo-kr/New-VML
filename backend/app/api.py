@@ -1,6 +1,7 @@
 # backend/app/api.py
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
+# (최신본) Authorization 헤더를 받아들이되(미필수), 업로드는 원본파일명 함께 반환.
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Header
 from fastapi.responses import JSONResponse, FileResponse
 from sqlmodel import Session, select, delete
 from uuid import uuid4
@@ -12,37 +13,54 @@ from .store_sql import Repo
 from .models import Project as ProjectModel, Analysis as AnalysisModel, MLTask as MLTaskModel
 from .services.data_loader import load_dataset
 from .queue_mongo import create_job, get_job
-from .config import settings
+from .config import ARTIFACT_ROOT, MLFLOW_URI
 
 router = APIRouter()
 
+# ---------------- Auth (참고용; 별도 router_auth 가 있다면 그대로 사용) ----------------
+@router.post("/auth/login")
+def login(body: dict, x_forwarded_for: str | None = Header(None)):
+    """
+    데모용 간단 로그인. 실제로는 router_auth를 사용하세요.
+    username=ml, password=ml 인 경우 OK
+    """
+    username = (body.get("username") or "").strip()
+    password = (body.get("password") or "").strip()
+    if not (username == "ml" and password == "ml"):
+        raise HTTPException(401, "invalid credentials")
+
+    # 클라이언트 IP
+    ip = x_forwarded_for or "127.0.0.1"
+    return {"access_token": "DEMO-TOKEN", "user": {"username": username, "role": "user"}, "ip": ip}
+
+@router.post("/auth/refresh")
+def refresh(authorization: str | None = Header(None)):
+    if not authorization:
+        raise HTTPException(401, "no token")
+    return {"access_token": "DEMO-TOKEN-REFRESHED"}
+
 # -------------------------------------------------------------------
 # Upload (dcc.Upload → 서버 파일 저장)
-#   - 원본 파일명은 응답에 포함 / 서버 저장명은 uuid로 보존
 # -------------------------------------------------------------------
 @router.post("/upload")
-async def upload_file(request: Request, f: UploadFile = File(...)):
-    os.makedirs(os.path.join(settings.ARTIFACT_ROOT, "datasets"), exist_ok=True)
+async def upload_file(f: UploadFile = File(...), authorization: str | None = Header(None)):
+    os.makedirs(os.path.join(ARTIFACT_ROOT, "datasets"), exist_ok=True)
     ext = os.path.splitext(f.filename or "")[-1].lower()
     if ext not in [".csv", ".xlsx", ".parquet"]:
         raise HTTPException(status_code=400, detail="Only .csv, .xlsx, .parquet allowed")
 
-    save_path = os.path.join(settings.ARTIFACT_ROOT, "datasets", f"{uuid4().hex}{ext}")
+    save_path = os.path.join(ARTIFACT_ROOT, "datasets", f"{uuid4().hex}{ext}")
     with open(save_path, "wb") as out:
         out.write(await f.read())
 
-    # 클라이언트 IP(프록시 환경 고려: X-Forwarded-For 우선)
-    client_ip = request.headers.get("x-forwarded-for") or request.client.host
-
-    return {"dataset_uri": f"file://{save_path}",
-            "original_name": (f.filename or os.path.basename(save_path)),
-            "client_ip": client_ip}
+    # 원본 파일명 포함
+    return {"dataset_uri": f"file://{save_path}", "original_name": (f.filename or os.path.basename(save_path))}
 
 # -------------------------------------------------------------------
 # Preview
 # -------------------------------------------------------------------
 @router.post("/preview")
-def preview(body: dict):
+def preview(body: dict, authorization: str | None = Header(None)):
     uri = (body.get("dataset_uri") or "").strip()
     if not uri:
         raise HTTPException(400, "dataset_uri required")
@@ -56,18 +74,18 @@ def preview(body: dict):
 # Projects
 # -------------------------------------------------------------------
 @router.post("/projects")
-def create_project(body: dict, s: Session = Depends(get_session)):
+def create_project(body: dict, s: Session = Depends(get_session), authorization: str | None = Header(None)):
     name = (body.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "name required")
     return Repo(s).create_project(name)
 
 @router.get("/projects")
-def list_projects(s: Session = Depends(get_session)):
+def list_projects(s: Session = Depends(get_session), authorization: str | None = Header(None)):
     return Repo(s).list_projects()
 
 @router.delete("/projects/{project_id}")
-def delete_project(project_id: str, s: Session = Depends(get_session)):
+def delete_project(project_id: str, s: Session = Depends(get_session), authorization: str | None = Header(None)):
     proj = s.get(ProjectModel, project_id)
     if not proj:
         raise HTTPException(404, "project not found")
@@ -87,27 +105,24 @@ def delete_project(project_id: str, s: Session = Depends(get_session)):
 # Analyses
 # -------------------------------------------------------------------
 @router.post("/analyses")
-def create_analysis(body: dict, s: Session = Depends(get_session)):
+def create_analysis(body: dict, s: Session = Depends(get_session), authorization: str | None = Header(None)):
     project_id = body.get("project_id")
     name = body.get("name") or "Analysis"
     dataset_uri = body.get("dataset_uri")
-    # 호환: "dataset_original_name" 또는 "original_name" 키 어느쪽이 와도 처리
     dataset_original_name = body.get("dataset_original_name") or body.get("original_name")
-
     if not (project_id and dataset_uri):
         raise HTTPException(400, "project_id and dataset_uri required")
-
     return Repo(s).create_analysis(project_id, name, dataset_uri, dataset_original_name=dataset_original_name)
 
 @router.get("/projects/{project_id}/analyses")
-def list_analyses(project_id: str, s: Session = Depends(get_session)):
+def list_analyses(project_id: str, s: Session = Depends(get_session), authorization: str | None = Header(None)):
     return Repo(s).list_analyses(project_id)
 
 # -------------------------------------------------------------------
 # Tasks
 # -------------------------------------------------------------------
 @router.post("/tasks")
-def create_task(body: dict, s: Session = Depends(get_session)):
+def create_task(body: dict, s: Session = Depends(get_session), authorization: str | None = Header(None)):
     analysis_id = body.get("analysis_id")
     task_type = body.get("task_type")
     target = body.get("target")
@@ -120,7 +135,6 @@ def create_task(body: dict, s: Session = Depends(get_session)):
     if not (analysis_id and task_type and target):
         raise HTTPException(400, "analysis_id, task_type, target required")
 
-    # 스키마 단순화를 위해 features/sampling은 model_params에 인라인 저장(후속 확장 대비)
     if features:
         model_params = {**model_params, "_features": features}
     if sampling:
@@ -139,8 +153,7 @@ def create_task(body: dict, s: Session = Depends(get_session)):
 # Train (enqueue job to Mongo)
 # -------------------------------------------------------------------
 @router.post("/tasks/{task_id}/train")
-def train_task(task_id: str, body: dict, s: Session = Depends(get_session)):
-    """큐에 잡 넣기 (idempotency_key, force는 현재 create_job에서 처리하지 않지만 확장 대비 body로 접수합니다)"""
+def train_task(task_id: str, body: dict, s: Session = Depends(get_session), authorization: str | None = Header(None)):
     repo = Repo(s)
     task = repo.get_task(task_id)
     if not task:
@@ -151,7 +164,7 @@ def train_task(task_id: str, body: dict, s: Session = Depends(get_session)):
         raise HTTPException(404, "analysis not found")
 
     dataset_original_name = getattr(analysis, "dataset_original_name", None) or \
-                            getattr(analysis, "dataset_orinial_name", None) or None  # 오타 컬럼 호환
+                            getattr(analysis, "dataset_orinial_name", None) or None
 
     job_id = create_job({
         "task_ref": {
@@ -164,8 +177,7 @@ def train_task(task_id: str, body: dict, s: Session = Depends(get_session)):
         },
         "dataset_uri": analysis.dataset_uri,
         "dataset_original_name": dataset_original_name,
-        "mlflow_uri": settings.MLFLOW_URI,
-        # 확장 필드(미사용): "idempotency_key": body.get("idempotency_key"), "force": body.get("force")
+        "mlflow_uri": MLFLOW_URI,
     })
     return {"run_id": job_id}
 
@@ -173,7 +185,7 @@ def train_task(task_id: str, body: dict, s: Session = Depends(get_session)):
 # Runs
 # -------------------------------------------------------------------
 @router.get("/runs/{run_id}")
-def get_run_info(run_id: str):
+def get_run(run_id: str, authorization: str | None = Header(None)):
     j = get_job(run_id)
     if not j:
         raise HTTPException(404, "run not found")
@@ -187,11 +199,11 @@ def get_run_info(run_id: str):
         "mlflow": j.get("mlflow", {}),
         "task_ref": j.get("task_ref", {}),
         "dataset_original_name": j.get("dataset_original_name"),
+        "analysis_id": j.get("task_ref", {}).get("analysis_id"),
     }
 
-# (옵션) 취소 엔드포인트 — 워커 구현이 있다면 사용
 @router.post("/runs/{run_id}/cancel")
-def cancel_run(run_id: str):
+def cancel_run(run_id: str, authorization: str | None = Header(None)):
     j = get_job(run_id)
     if not j:
         raise HTTPException(404, "run not found")
@@ -203,12 +215,12 @@ def cancel_run(run_id: str):
 # Artifact proxy (MLflow 파일 모드)
 # -------------------------------------------------------------------
 @router.get("/runs/{run_id}/artifact")
-def get_artifact(run_id: str, name: str):
+def get_artifact(run_id: str, name: str, authorization: str | None = Header(None)):
     j = get_job(run_id)
     if not j:
         raise HTTPException(404, "run not found")
 
-    mlflow.set_tracking_uri(j.get("mlflow_uri") or settings.MLFLOW_URI)
+    mlflow.set_tracking_uri(j.get("mlflow_uri") or MLFLOW_URI)
 
     from mlflow.tracking import MlflowClient
     mlrun = (j.get("mlflow") or {}).get("run_id")
