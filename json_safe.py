@@ -1,7 +1,14 @@
 # backend/app/utils/json_safe.py
 
+"""
+JSON 직렬화 안전 헬퍼
+- NaN, +Inf, -Inf -> None
+- numpy/pandas/native 혼합 타입을 재귀적으로 처리
+- datetime -> ISO8601
+- DataFrame 미리보기 편의 함수 제공
+"""
 from __future__ import annotations
-from typing import Any, Iterable, Mapping, Tuple, List, Dict, Union
+from typing import Any, Iterable, Mapping, List, Dict
 import math
 import numpy as np
 import pandas as pd
@@ -10,13 +17,13 @@ from decimal import Decimal
 
 Finite = (int, float, np.integer, np.floating)
 
+
 def _finite_or_none(x: Any) -> Any:
     if isinstance(x, Finite):
         xf = float(x)
-        if math.isfinite(xf):
-            return xf
-        return None
+        return xf if math.isfinite(xf) else None
     return x
+
 
 def _to_builtin(x: Any) -> Any:
     if isinstance(x, (np.integer,)):
@@ -30,6 +37,7 @@ def _to_builtin(x: Any) -> Any:
     if isinstance(x, (datetime, date)):
         return x.isoformat()
     return x
+
 
 def json_safe(obj: Any) -> Any:
     if obj is None or isinstance(obj, (str, bytes)):
@@ -60,12 +68,10 @@ def json_safe(obj: Any) -> Any:
     except Exception:
         return None
 
+
 def df_preview_safe(df: pd.DataFrame, limit: int = 50) -> Dict[str, Any]:
     head = df.head(int(limit)).copy()
     rows: List[List[Any]] = []
     for row in head.itertuples(index=False, name=None):
         rows.append([json_safe(v) for v in row])
-    return {
-        "columns": [str(c) for c in head.columns.tolist()],
-        "rows": rows
-    }
+    return {"columns": [str(c) for c in head.columns.tolist()], "rows": rows}
