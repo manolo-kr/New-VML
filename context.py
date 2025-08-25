@@ -1,8 +1,11 @@
 # backend/app/services/context.py
 
 from __future__ import annotations
-from typing import Optional
+from fastapi import Request
+from typing import Optional, Dict, Any
 
-def get_user_id_from_request_state(state) -> Optional[str]:
-    # 내부 허용 모드: 사용자 구분 안함
-    return None
+def current_user(request: Request) -> Optional[Dict[str, Any]]:
+    u = getattr(request.state, "user", None)
+    if not u:
+        return None
+    return {"id": u.get("id"), "role": u.get("role", "user")}
