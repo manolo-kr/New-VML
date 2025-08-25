@@ -1,17 +1,19 @@
 # backend/app/db.py
 
+from __future__ import annotations
+
 from sqlmodel import SQLModel, create_engine, Session
-from .config import DATABASE_URL
 
-_engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True, future=True)
+from .config import DB_URL
 
-def get_engine():
-    return _engine
+_engine = create_engine(DB_URL, echo=False, pool_pre_ping=True)
 
-def get_session():
-    with Session(_engine) as session:
-        yield session
 
-def create_db_and_tables():
-    from . import models  # ensure models imported
+def get_session() -> Session:
+    with Session(_engine) as s:
+        yield s
+
+
+def create_db_and_tables() -> None:
+    from . import models  # ensure models are imported
     SQLModel.metadata.create_all(_engine)
