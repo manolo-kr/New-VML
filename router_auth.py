@@ -1,39 +1,66 @@
 # backend/app/auth/router_auth.py
 
 from __future__ import annotations
-
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlmodel import Session
+from fastapi import APIRouter, HTTPException, Depends
+from sqlmodel import Session, select
+from typing import Dict, Any
 
 from ..db import get_session
-from ..store_sql import Repo
-from ..services.auth_utils import verify_password, create_access_token
+from ..models import User
+from ..services.auth_utils import (
+    verify_password, create_access_token, create_refresh_token, decode_token
+)
+from .schemas import LoginRequest, TokenPair, RefreshRequest, UserOut
 
-router = APIRouter()
+router = APIRouter(prefix="/auth", tags=["auth"])
 
+def _user_out(u: User) -> UserOut:
+    return UserOut(id=u.id, username=u.username, role=u.role or "user", meta=u.meta or {})
 
-@router.post("/login")
-def login(body: dict, s: Session = Depends(get_session)):
-    email = (body.get("email") or "").strip().lower()
-    password = body.get("password") or ""
-    if not email or not password:
-        raise HTTPException(400, "email and password required")
+@router.post("/login", response_model=TokenPair)
+def login(body: LoginRequest, s: Session = Depends(get_session)) -> TokenPair:
+    q = select(User).where(User.username == body.username)
+    u = s.exec(q).first()
+    if not u or not verify_password(body.password, u.password_hash):
+        raise HTTPException(status_code=401, detail="invalid credentials")
 
-    repo = Repo(s)
-    user = repo.get_user_by_email(email)
-    if not user or not verify_password(password, user.password_hash):
-        raise HTTPException(401, "invalid credentials")
-
-    token = create_access_token(
-        user.id,
-        extra_claims={"email": user.email, "name": user.name, "role": user.role},
+    access, access_exp = create_access_token(u.id, {"role": u.role or "user"})
+    refresh, refresh_exp = create_refresh_token(u.id, {"role": u.role or "user"})
+    return TokenPair(
+        access_token=access,
+        access_exp=access_exp,
+        refresh_token=refresh,
+        refresh_exp=refresh_exp,
     )
-    return {"access_token": token, "token_type": "bearer", "user": {"id": user.id, "email": user.email, "name": user.name, "role": user.role}}
 
+@router.post("/refresh", response_model=TokenPair)
+def refresh(body: RefreshRequest, s: Session = Depends(get_session)) -> TokenPair:
+    try:
+        payload: Dict[str, Any] = decode_token(body.refresh_token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="invalid refresh token")
 
-@router.get("/me")
-def me(request: Request):
-    u = getattr(request.state, "user", None)
+    if payload.get("typ") != "refresh":
+        raise HTTPException(status_code=400, detail="not a refresh token")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="invalid refresh token")
+
+    u = s.get(User, user_id)
     if not u:
-        raise HTTPException(401, "unauthorized")
-    return u
+        raise HTTPException(status_code=401, detail="user not found")
+
+    access, access_exp = create_access_token(u.id, {"role": u.role or "user"})
+    refresh, refresh_exp = create_refresh_token(u.id, {"role": u.role or "user"})
+
+    return TokenPair(
+        access_token=access,
+        access_exp=access_exp,
+        refresh_token=refresh,
+        refresh_exp=refresh_exp,
+    )
+
+@router.post("/logout")
+def logout() -> dict:
+    return {"ok": True}
