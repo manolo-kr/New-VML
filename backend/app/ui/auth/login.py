@@ -1,5 +1,5 @@
 # backend/app/ui/auth/login.py
-import json
+
 import urllib.parse as up
 
 import dash
@@ -20,7 +20,7 @@ _layout_form = dbc.Card(
                 dbc.Input(id="_auth_password", placeholder="Password", type="password", className="mb-3"),
                 dbc.Button("Login", id="_auth_submit", color="primary", className="w-100"),
                 html.Small(
-                    "세션은 비활성 10분 후 만료됩니다. 활동하면 자동 연장됩니다.",
+                    "세션은 비활성 10분 후 만료됩니다. 'Extend 10m'로 연장할 수 있어요.",
                     className="text-muted d-block mt-3",
                 ),
             ]
@@ -50,7 +50,6 @@ layout = dbc.Container(
 def _already_logged_in(auth, href):
     if not auth or not auth.get("access_token"):
         return no_update
-    # next 파라미터 우선
     next_path = "/"
     if href:
         q = up.urlparse(href).query
@@ -75,13 +74,11 @@ def _do_login(n, username, password, href):
         return no_update, no_update, no_update, no_update
     try:
         res = api.login(username or "", password or "")
-        # 서버가 {'access_token':..., 'user':{...}, 'ip':'...'} 형식으로 응답한다고 가정
         auth = {
             "access_token": res.get("access_token"),
             "user": res.get("user"),
             "ip": res.get("ip"),
         }
-        # next 파라미터 복원
         next_path = "/"
         if href:
             q = up.urlparse(href).query
