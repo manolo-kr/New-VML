@@ -37,10 +37,7 @@ def _badge(status: str | None) -> dbc.Badge:
     }.get(s, "light")
     return dbc.Badge(s if s != "-" else "-", color=color, className="text-uppercase")
 
-def _render_table(task_ids: List[str],
-                  run_ids: Dict[str, str],
-                  status_map: Dict[str, Any],
-                  meta: Dict[str, Dict[str, str]] | None) -> html.Div:
+def _render_table(task_ids: List[str], run_ids: Dict[str, str], status_map: Dict[str, Any], meta: Dict[str, Dict[str, str]] | None) -> html.Div:
     meta = meta or {}
     header = html.Thead(html.Tr([
         html.Th("Task ID"),
@@ -51,7 +48,7 @@ def _render_table(task_ids: List[str],
         html.Th("Status"),
         html.Th("Progress"),
         html.Th("Message"),
-        html.Th("Results"),
+        html.Th("Result"),
     ]))
     rows = []
     for tid in task_ids or []:
@@ -66,7 +63,8 @@ def _render_table(task_ids: List[str],
         ttype = m.get("task_type") or (info.get("task_ref") or {}).get("task_type") or "-"
         fname = m.get("dataset_original_name") or info.get("dataset_original_name") or "-"
 
-        results_link = (dcc.Link("Open", href=f"/analysis/results?run_id={rid}") if rid else html.Span("-"))
+        # 결과 페이지 링크 (run_id가 있어야)
+        result_link = (dcc.Link("Open", href=f"/analysis/results?run_id={rid}") if rid else html.Span("-"))
 
         rows.append(html.Tr([
             html.Td(tid),
@@ -77,10 +75,9 @@ def _render_table(task_ids: List[str],
             html.Td(_badge(st)),
             html.Td(f"{int((prog or 0)*100)}%" if isinstance(prog, (int, float)) else "-"),
             html.Td(msg or "-"),
-            html.Td(results_link),
+            html.Td(result_link),
         ]))
-    table = dbc.Table([header, html.Tbody(rows)], bordered=True, hover=True, responsive=True, className="align-middle")
-    return html.Div(table)
+    return html.Div(dbc.Table([header, html.Tbody(rows)], bordered=True, hover=True, responsive=True, className="align-middle"))
 
 layout = dbc.Container([
     dcc.Location(id="train-url"),
@@ -101,6 +98,7 @@ layout = dbc.Container([
 
     html.Div(id="train-contents"),
 ], fluid=True)
+
 
 @callback(
     Output("train-task-ids", "data"),
@@ -125,6 +123,7 @@ def _init_from_url(href):
                 meta = {}
     return task_ids, meta or {}
 
+
 @callback(
     Output("train-run-ids", "data"),
     Input("btn-start-all", "n_clicks"),
@@ -132,13 +131,15 @@ def _init_from_url(href):
     State("train-task-ids", "data"),
     State("train-run-ids", "data"),
     State("train-status", "data"),
+    State("gs-auth", "data"),
     prevent_initial_call=True
 )
-def _control_runs(n_start, n_cancel, task_ids, run_ids, status_map):
+def _control_runs(n_start, n_cancel, task_ids, run_ids, status_map, auth):
     trig = dash.ctx.triggered_id
     task_ids = task_ids or []
     run_ids = (run_ids or {}).copy()
     status_map = status_map or {}
+    token = (auth or {}).get("access_token")
 
     if trig == "btn-start-all":
         run_ids = {}
@@ -148,7 +149,8 @@ def _control_runs(n_start, n_cancel, task_ids, run_ids, status_map):
                 resp = api.train_task(
                     tid,
                     hpo=None,
-                    extra={"idempotency_key": f"start:{tid}:{now_tag}", "force": True}
+                    extra={"idempotency_key": f"start:{tid}:{now_tag}", "force": True},
+                    token=token
                 )
                 new_rid = resp.get("run_id")
                 if new_rid:
@@ -160,31 +162,35 @@ def _control_runs(n_start, n_cancel, task_ids, run_ids, status_map):
     if trig == "btn-cancel-all":
         for rid in (run_ids or {}).values():
             try:
-                api.cancel_run(rid)
+                api.cancel_run(rid, token=token)
             except Exception:
                 pass
         return run_ids
 
     return no_update
 
+
 @callback(
     Output("train-status", "data"),
     Input("train-poll", "n_intervals"),
     State("train-run-ids", "data"),
+    State("gs-auth", "data"),
     prevent_initial_call=True
 )
-def _poll_status(_n, run_ids):
+def _poll_status(_n, run_ids, auth):
     run_ids = run_ids or {}
     out: Dict[str, Any] = {}
     if not run_ids:
         return out
+    token = (auth or {}).get("access_token")
     for rid in run_ids.values():
         try:
-            info = api.get_run(rid)
+            info = api.get_run(rid, token=token)
             out[rid] = info or {}
         except Exception:
             out[rid] = {"status": "error", "message": "fetch failed"}
     return out
+
 
 @callback(
     Output("train-poll", "disabled"),
@@ -204,6 +210,7 @@ def _derive_poll_and_busy(run_ids, status_map):
             any_active = True
             break
     return (not any_active), any_active
+
 
 @callback(
     Output("train-mode-banner", "children"),
