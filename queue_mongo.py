@@ -1,14 +1,15 @@
 # backend/app/queue_mongo.py
 
+from __future__ import annotations
 from typing import Any, Dict, Optional
 from datetime import datetime
 from pymongo import MongoClient, ASCENDING
 from bson import ObjectId
-from .config import MONGO_URI, MONGO_DB, MONGO_COLLECTION
+from app.config import settings
 
-_client = MongoClient(MONGO_URI)
-_db = _client[MONGO_DB]
-_jobs = _db[MONGO_COLLECTION]
+_client = MongoClient(settings.MONGO_URI)
+_db = _client[settings.MONGO_DB]
+_jobs = _db[settings.MONGO_COLLECTION]
 
 def ensure_indexes() -> None:
     _jobs.create_index([("status", ASCENDING), ("task_ref.task_id", ASCENDING)])
@@ -19,10 +20,9 @@ def create_job(payload: Dict[str, Any]) -> str:
     doc = {
         **payload,
         "status": payload.get("status", "queued"),
-        "worker_id": payload.get("worker_id", None),
+        "worker_id": payload.get("worker_id"),
         "progress": float(payload.get("progress", 0.0)),
         "message": payload.get("message", ""),
-        "cancel_requested": bool(payload.get("cancel_requested", False)),
         "created_at": now,
         "updated_at": now,
     }
@@ -41,19 +41,13 @@ def set_job_fields(job_id: str, fields: Dict[str, Any]) -> None:
     _jobs.update_one({"_id": ObjectId(job_id)}, {"$set": fields})
 
 def get_active_job_by_task(task_id: str) -> Optional[Dict[str, Any]]:
-    d = _jobs.find_one({
+    return _jobs.find_one({
         "task_ref.task_id": task_id,
         "status": {"$in": ["queued", "running"]},
     })
-    return d
 
-def create_job_idempotent(
-    payload: Dict[str, Any],
-    idempotency_key: Optional[str] = None,
-    force: bool = False,
-) -> str:
-    task_ref = payload.get("task_ref") or {}
-    task_id = task_ref.get("task_id")
+def create_job_idempotent(payload: Dict[str, Any], idempotency_key: Optional[str]=None, force: bool=False) -> str:
+    task_id = (payload.get("task_ref") or {}).get("task_id")
     if not force and task_id:
         active = get_active_job_by_task(task_id)
         if active:
@@ -62,15 +56,15 @@ def create_job_idempotent(
         prev = _jobs.find_one({"idempotency_key": idempotency_key})
         if prev:
             return str(prev["_id"])
+
     now = datetime.utcnow()
     doc = {
         **payload,
         "status": payload.get("status", "queued"),
-        "worker_id": payload.get("worker_id", None),
+        "worker_id": payload.get("worker_id"),
         "progress": float(payload.get("progress", 0.0)),
         "message": payload.get("message", ""),
         "idempotency_key": idempotency_key or None,
-        "cancel_requested": False,
         "created_at": now,
         "updated_at": now,
     }
