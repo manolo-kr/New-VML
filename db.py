@@ -1,14 +1,14 @@
 # backend/app/db.py
 
-from __future__ import annotations
 from sqlmodel import SQLModel, create_engine, Session
-from .config import DATABASE_URL
+from .config import PG_DSN
 
-_engine = create_engine(DATABASE_URL, echo=False, future=True)
+_engine = create_engine(PG_DSN, echo=False, pool_pre_ping=True)
 
-def get_session() -> Session:
+def get_session():
     with Session(_engine) as s:
         yield s
 
-def create_db_and_tables() -> None:
+def create_db_and_tables():
+    from .models import Project, Analysis, MLTask, User
     SQLModel.metadata.create_all(_engine)
