@@ -1,4 +1,5 @@
 # backend/app/ui/app.py
+
 import dash
 from dash import dcc, html, callback, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
@@ -7,7 +8,7 @@ import dash_bootstrap_components as dbc
 GLOBAL_STORES = [
     dcc.Store(id="gs-auth", storage_type="session"),         # {"access_token": "...", "user": {...}, "ip":"..."}
     dcc.Store(id="gs-project", storage_type="session"),      # {"id": "...", "name": "..."}
-    dcc.Store(id="gs-design-state", storage_type="session"), # {"analysis_id": "...", "dataset_uri": "...", ...}
+    dcc.Store(id="gs-design-state", storage_type="session"), # {"analysis_id": "...", ...}
 ]
 
 def _user_badge(user_data: dict | None) -> html.Div:
@@ -24,7 +25,6 @@ def _user_badge(user_data: dict | None) -> html.Div:
     )
 
 def build_dash_app() -> dash.Dash:
-    """Dash 앱 팩토리"""
     app = dash.Dash(
         __name__,
         use_pages=True,
@@ -36,11 +36,12 @@ def build_dash_app() -> dash.Dash:
     app.layout = dbc.Container(
         [
             # 라우팅/리다이렉트용
-            dcc.Location(id="_router"),                 # 현재 URL
-            dcc.Location(id="_auth_redirect"),         # 가드가 쓰는 강제 리다이렉트 대상
-            html.Div(id="_guard_msg", style={"display": "none"}),  # 디버그 메시지 영역(숨김)
+            dcc.Location(id="_router"),              # 현재 URL
+            dcc.Location(id="_auth_redirect"),       # 가드 리다이렉트 전용
+            dcc.Location(id="_logout_redirect"),     # 로그아웃 리다이렉트 전용(중복 방지)
+            html.Div(id="_guard_msg", style={"display": "none"}),
 
-            # 전역 상태 (세션 보존)
+            # 전역 상태
             *GLOBAL_STORES,
 
             # 네비게이션 바
@@ -59,13 +60,26 @@ def build_dash_app() -> dash.Dash:
                         navbar=True,
                     ),
 
-                    # 우측 사용자/로그아웃
+                    # 우측 사용자/아이피 뱃지 + 연장/로그아웃
                     html.Div(id="_navbar_user_badges", className="d-flex align-items-center me-2"),
+                    dbc.Button("Extend 10m", id="_btn_extend", color="warning", size="sm", class_name="me-2"),
                     dbc.Button("Logout", id="_btn_logout", color="light", size="sm"),
                 ],
                 color="dark",
                 dark=True,
                 class_name="mb-3 rounded",
+            ),
+
+            # 연장 성공 토스트
+            dbc.Toast(
+                "Session extended by 10 minutes.",
+                id="_extend_toast",
+                header="OK",
+                is_open=False,
+                dismissable=True,
+                icon="primary",
+                duration=2500,
+                style={"position": "fixed", "top": 80, "right": 20, "zIndex": 1080},
             ),
 
             # 페이지 컨테이너
@@ -85,14 +99,10 @@ def build_dash_app() -> dash.Dash:
         prevent_initial_call=False,
     )
     def _guard(pathname, auth):
-        # 로그인 페이지 자체는 열어둠
         if pathname and pathname.startswith("/auth/login"):
-            # 이미 로그인 한 상태면 홈으로(혹은 next 파라미터가 있다면 그곳으로) 보내도 됨
             return no_update, "on login page"
-        # 인증 필요: 토큰 없으면 로그인으로 리다이렉트
         has_token = bool(auth and auth.get("access_token"))
         if not has_token:
-            # 다음에 돌아올 경로 next= 로 전달
             target = f"/auth/login?next={pathname or '/'}"
             return target, "redirected to login"
         return no_update, "guard ok"
@@ -109,18 +119,47 @@ def build_dash_app() -> dash.Dash:
         return _user_badge(auth)
 
     # -------------------------------
-    # 클라이언트 로그아웃: 토큰 삭제 후 로그인으로
+    # 클라이언트 로그아웃 (중복 방지: _logout_redirect 사용)
     # -------------------------------
     @callback(
         Output("gs-auth", "data"),
-        Output("_auth_redirect", "href"),
+        Output("_logout_redirect", "href"),
         Input("_btn_logout", "n_clicks"),
         prevent_initial_call=True,
     )
     def _logout(n):
         if not n:
             return no_update, no_update
-        # 세션 토큰 클리어 → 로그인 페이지
         return {}, "/auth/login?logged_out=1"
+
+    # -------------------------------
+    # 세션 연장 (10분): /auth/refresh 호출 → 토큰 갱신
+    # -------------------------------
+    @callback(
+        Output("gs-auth", "data"),
+        Output("_extend_toast", "is_open"),
+        Input("_btn_extend", "n_clicks"),
+        State("gs-auth", "data"),
+        prevent_initial_call=True,
+    )
+    def _extend(n, auth):
+        if not n:
+            return no_update, no_update
+        if not auth or not auth.get("access_token"):
+            # 미로그인 상태면 아무 처리 없음
+            return no_update, False
+        try:
+            # api_client.refresh()는 새 access_token 및 exp 갱신값을 돌려준다고 가정
+            from app.ui.clients import api_client as api
+            res = api.refresh(auth.get("access_token"))
+            new_auth = {
+                "access_token": res.get("access_token") or auth.get("access_token"),
+                "user": auth.get("user"),
+                "ip": auth.get("ip"),
+            }
+            return new_auth, True
+        except Exception:
+            # 실패 시 토스트는 띄우지 않음
+            return no_update, False
 
     return app
