@@ -74,9 +74,9 @@ def _show_err(err):
     return str(err), True
 
 
-# 로그인 처리: 성공 시 gs-auth만 세팅 (리다이렉트는 app.py 가드가 담당)
+# 로그인 처리: 성공 시 gs-auth 갱신 (리다이렉트는 app.py 가드가 담당)
 @callback(
-    Output("gs-auth", "data"),
+    Output("gs-auth", "data", allow_duplicate=True),
     Output("login-error", "data"),
     Input("login-submit", "n_clicks"),
     State("login-username", "value"),
@@ -97,11 +97,7 @@ def _do_login(n, username, password, href):
         API_DIR = os.getenv("API_DIR", "http://127.0.0.1:8065").rstrip("/")
         API_BASE = os.getenv("API_BASE", "/api").rstrip("/")
         url = f"{API_DIR}{API_BASE}/auth/login"
-        r = requests.post(
-            url,
-            json={"username": username, "password": password},
-            timeout=10,
-        )
+        r = requests.post(url, json={"username": username, "password": password}, timeout=10)
         if r.status_code != 200:
             return no_update, f"Login failed: {r.text}"
         data = r.json()  # {"access_token": "...", "user": {..., "ip": "..."}}
