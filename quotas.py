@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 from typing import Optional
-from .config import (
-    USER_MAX_CONCURRENT, USER_MAX_QUEUED,
-    GLOBAL_MAX_CONCURRENT, GLOBAL_MAX_QUEUED
-)
+from app.config import settings
+from app.queue_mongo import _jobs
+
+
+def count_running_jobs(user_id: Optional[str] = None) -> int:
+    q = {"status": {"$in": ["queued", "running"]}}
+    if user_id:
+        q["user_id"] = user_id
+    return _jobs.count_documents(q)
+
 
 def can_enqueue(user_id: Optional[str]) -> bool:
-    """
-    현재는 하드 제한만 스텁. (실사용은 Mongo 상태 카운팅으로 보완)
-    """
+    # 글로벌
+    if count_running_jobs(None) >= settings.GLOBAL_MAX_RUNNING:
+        return False
+    # 유저별
+    if user_id and count_running_jobs(user_id) >= settings.USER_MAX_CONCURRENT:
+        return False
     return True
