@@ -15,95 +15,90 @@ dash.register_page(__name__, path="/analysis/compare", name="Compare")
 
 layout = dbc.Container([
     dcc.Location(id="compare-url"),
-    dcc.Store(id="compare-run-ids"),
-    dcc.Store(id="compare-models"),  # {run_id: model_key}
+    dcc.Store(id="compare-run-ids"),       # 유일 작성 스토어
+    dcc.Store(id="compare-patch"),         # 추가/삭제 인박스
 
-    html.H3("Compare runs"),
-
+    html.H2("Compare Runs"),
     dbc.Row([
-        dbc.Col(dbc.Input(id="compare-runs-input", placeholder="Comma-separated run_ids", type="text"), md=6),
-        dbc.Col(dbc.Button("Load", id="compare-load", color="primary"), width="auto"),
-    ], className="g-2 mb-3"),
+        dbc.Col(dbc.Input(id="compare-add-run", placeholder="Run ID to add"), md=6),
+        dbc.Col(dbc.Button("Add", id="compare-btn-add", color="primary"), width="auto"),
+        dbc.Col(dbc.Button("Clear", id="compare-btn-clear", color="secondary", outline=True), width="auto"),
+    ], className="g-2 mb-2"),
 
-    html.Div(id="compare-banner"),
     html.Div(id="compare-table"),
 ], fluid=True)
 
-
+# 0) Add/Clear → patch (compare-patch만 출력)
 @callback(
-    Output("compare-runs-input", "value"),
-    Output("compare-run-ids", "data"),
-    Input("compare-url", "href"),
-    prevent_initial_call=False
-)
-def _init(href):
-    if not href:
-        return no_update, no_update
-    q = up.urlparse(href).query
-    params = dict(up.parse_qsl(q, keep_blank_values=True))
-    runs = []
-    if "run_ids" in params and params["run_ids"]:
-        runs = [x for x in params["run_ids"].split(",") if x]
-    return ",".join(runs), runs
-
-
-@callback(
-    Output("compare-run-ids", "data"),
-    Input("compare-load", "n_clicks"),
-    State("compare-runs-input", "value"),
+    Output("compare-patch", "data"),
+    Input("compare-btn-add", "n_clicks"),
+    Input("compare-btn-clear", "n_clicks"),
+    State("compare-add-run", "value"),
     prevent_initial_call=True
 )
-def _load(_n, s):
-    if not s:
-        return no_update
-    runs = [x.strip() for x in s.split(",") if x.strip()]
-    return runs
-
-
-@callback(
-    Output("compare-banner", "children"),
-    Input("compare-run-ids", "data")
-)
-def _banner(runs):
-    if not runs:
-        return dbc.Alert("Enter run IDs above.", color="secondary", className="py-2")
+def _patch(n_add, n_clear, value):
+    trig = dash.ctx.triggered_id
+    if trig == "compare-btn-add" and value:
+        return {"op":"add","run_id":value.strip()}
+    if trig == "compare-btn-clear":
+        return {"op":"clear"}
     return no_update
 
+# 1) URL + patch → compare-run-ids.data (유일 작성)
+@callback(
+    Output("compare-run-ids", "data"),
+    Input("compare-url", "href"),
+    Input("compare-patch", "data"),
+    State("compare-run-ids", "data"),
+    prevent_initial_call=False
+)
+def _set_run_ids(href, patch, current):
+    runs: List[str] = list(current or [])
+    if dash.ctx.triggered_id == "compare-url":
+        if href:
+            q = up.urlparse(href).query
+            params = dict(up.parse_qsl(q, keep_blank_values=True))
+            if "run_ids" in params and params["run_ids"]:
+                runs = [r for r in params["run_ids"].split(",") if r]
+            else:
+                runs = []
+        return runs
+    # patch
+    if patch:
+        op = patch.get("op")
+        if op == "add" and patch.get("run_id"):
+            rid = patch["run_id"]
+            if rid not in runs:
+                runs.append(rid)
+        elif op == "clear":
+            runs = []
+    return runs
 
+# 2) 테이블 렌더
 @callback(
     Output("compare-table", "children"),
     Input("compare-run-ids", "data"),
-    State("gs-auth", "data")
+    State("gs-auth", "data"),
 )
-def _render(runs, auth):
-    runs = runs or []
-    if not runs:
-        return no_update
+def _render_table(run_ids, auth):
     token = (auth or {}).get("access_token")
-
+    run_ids = run_ids or []
+    if not run_ids:
+        return dbc.Alert("Add run IDs to compare.", color="secondary")
     rows = []
-    for rid in runs:
+    for rid in run_ids:
         try:
-            run = api.get_run(rid, token=token)
+            info = api.get_run(rid, token=token)
+            task = info.get("task_ref") or {}
+            rows.append(html.Tr([
+                html.Td(rid),
+                html.Td(task.get("model_family") or "-"),
+                html.Td(task.get("task_type") or "-"),
+                html.Td(info.get("status") or "-"),
+                html.Td(dcc.Link("View", href=f"/analysis/results?run_id={rid}")),
+            ]))
         except Exception:
-            run = {}
-        status = run.get("status", "-")
-        model = (run.get("task_ref") or {}).get("model_family", "-")
-        ttype = (run.get("task_ref") or {}).get("task_type", "-")
-        fname = run.get("dataset_original_name") or "-"
-        # 핵심 메트릭(예: auc, acc 등 요약)
-        try:
-            summary = api.get_artifact_json(rid, f"models/{model}/metrics/summary.json", token=token) if model and model != "-" else {}
-        except Exception:
-            summary = {}
-        core = ", ".join(f"{k}={v}" for k, v in (summary or {}).items())
-        rows.append(html.Tr([
-            html.Td(rid),
-            html.Td(model), html.Td(ttype), html.Td(fname), html.Td(status),
-            html.Td(core or "-"),
-            html.Td(dcc.Link("Open", href=f"/analysis/results?run_id={rid}")),
-        ]))
-
-    header = html.Thead(html.Tr([html.Th("Run ID"), html.Th("Model"), html.Th("Type"),
-                                 html.Th("File"), html.Th("Status"), html.Th("Summary"), html.Th("Results")]))
-    return dbc.Table([header, html.Tbody(rows)], bordered=True, hover=True, responsive=True, className="align-middle")
+            rows.append(html.Tr([html.Td(rid), html.Td("-", colSpan=4)]))
+    table = dbc.Table([html.Thead(html.Tr([html.Th("Run ID"), html.Th("Model"), html.Th("Type"), html.Th("Status"), html.Th("Results")])),
+                       html.Tbody(rows)], bordered=True, hover=True, responsive=True)
+    return table
