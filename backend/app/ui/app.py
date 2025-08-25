@@ -4,17 +4,14 @@ import dash
 from dash import dcc, html, callback, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
 
-# 전역 Store: 로그인/프로젝트/디자인 상태 (세션 스토리지)
+# 전역 Store: 로그인/프로젝트/디자인 상태
 GLOBAL_STORES = [
-    dcc.Store(id="gs-auth", storage_type="session"),         # {"access_token": "...", "user": {...}}
-    dcc.Store(id="gs-project", storage_type="session"),      # {"id": "...", "name": "..."}
-    dcc.Store(id="gs-design-state", storage_type="session"), # {"analysis_id": "...", ...}
+    dcc.Store(id="gs-auth", storage_type="session"),
+    dcc.Store(id="gs-project", storage_type="session"),
+    dcc.Store(id="gs-design-state", storage_type="session"),
 ]
 
 def _navbar():
-    user_badge = html.Span(id="nav-user-badge", className="me-2")
-    ip_badge = html.Span(id="nav-ip-badge", className="me-2")
-
     return dbc.Navbar(
         dbc.Container([
             dbc.NavbarBrand("Visual ML", href="/"),
@@ -28,10 +25,11 @@ def _navbar():
                 ],
                 navbar=True,
             ),
+            # 우측: 사용자 / IP / 로그아웃
             html.Div(
                 [
-                    user_badge,
-                    ip_badge,
+                    html.Span(id="nav-user-badge", className="me-2"),
+                    html.Span(id="nav-ip-badge", className="me-2"),
                     dbc.Button("Logout", id="btn-logout", size="sm", color="secondary", outline=True, className="ms-2"),
                 ],
                 className="d-flex align-items-center",
@@ -46,25 +44,25 @@ def build_dash_app() -> dash.Dash:
     app = dash.Dash(
         __name__,
         use_pages=True,
-        pages_folder=None,                 # ★ 자동 스캔 끔 → 'pages.*' 중복 등록 방지
+        # ✅ None 금지. 문자열 경로로 비활성화(실제 폴더가 없어도 됨)
+        pages_folder="__no_auto_pages__",
         suppress_callback_exceptions=True,
         external_stylesheets=[dbc.themes.BOOTSTRAP],
         title="Visual ML",
     )
 
-    # 앱 생성 후, 여기서 페이지 모듈 임포트(= register_page 수행 시점 보장)
-    # 이 방식으로만 페이지 등록이 이뤄지므로 'pages' 폴더 자동 스캔과 충돌 없음
-    from app.ui.auth import login as _login      # noqa: F401
-    from app.ui.pages import home as _home       # noqa: F401
-    from app.ui.pages import analysis_design as _design    # noqa: F401
-    from app.ui.pages import analysis_train as _train      # noqa: F401
-    from app.ui.pages import analysis_results as _results  # noqa: F401
-    from app.ui.pages import analysis_compare as _compare  # noqa: F401
+    # 여기서 수동 임포트로 등록 (중복 방지)
+    from app.ui.auth import login as _login       # noqa: F401
+    from app.ui.pages import home as _home        # noqa: F401
+    from app.ui.pages import analysis_design as _design     # noqa: F401
+    from app.ui.pages import analysis_train as _train       # noqa: F401
+    from app.ui.pages import analysis_results as _results   # noqa: F401
+    from app.ui.pages import analysis_compare as _compare   # noqa: F401
 
     app.layout = dbc.Container([
         dcc.Location(id="_url"),
-        # 가드/로그인 리다이렉트를 분리해 콜백 중복 방지
         dcc.Location(id="_guard_redirect", refresh=True),
+        # auth 콜백 체인에서만 쓰는 더미 sink (출력 충돌 방지용)
         dcc.Location(id="_auth_redirect_sink"),
 
         *GLOBAL_STORES,
@@ -72,7 +70,7 @@ def build_dash_app() -> dash.Dash:
         dash.page_container,
     ], fluid=True)
 
-    # 1) 인증 가드: 토큰 없고, 현재 경로가 /auth/login 이 아니면 로그인으로 보냄
+    # 1) 인증 가드
     @callback(
         Output("_guard_redirect", "href"),
         Input("_url", "pathname"),
@@ -81,14 +79,16 @@ def build_dash_app() -> dash.Dash:
     )
     def _guard(pathname, gs_auth):
         path = pathname or "/"
+        # 로그인 페이지는 가드 예외
         if path.startswith("/auth/login"):
             return no_update
         token = (gs_auth or {}).get("access_token")
         if not token:
+            # 로그인으로 리다이렉트
             return f"/auth/login?next={path}"
         return no_update
 
-    # 2) 네비바 사용자/아이피 뱃지 렌더
+    # 2) 네비바 뱃지
     @callback(
         Output("nav-user-badge", "children"),
         Output("nav-ip-badge", "children"),
@@ -104,7 +104,7 @@ def build_dash_app() -> dash.Dash:
             dbc.Badge(f"IP: {ip}", color="secondary"),
         )
 
-    # 3) 로그아웃 버튼 → gs-auth 초기화 (가드가 로그인으로 보냄)
+    # 3) 로그아웃 → gs-auth 초기화 (가드가 자동으로 로그인으로 보냄)
     @callback(
         Output("gs-auth", "data"),
         Input("btn-logout", "n_clicks"),
