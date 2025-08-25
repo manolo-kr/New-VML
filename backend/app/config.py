@@ -2,51 +2,45 @@
 
 from __future__ import annotations
 from typing import List, Optional
-from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
+from pydantic import Field
 
 class Settings(BaseSettings):
-    # ── API / CORS ────────────────────────────────────────────────
-    API_BASE: str = "/api"
-    CORS_ORIGINS: List[str] = ["*"]
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # ── DB (PostgreSQL) ──────────────────────────────────────────
-    # 예: postgresql+psycopg2://ml:ml@127.0.0.1:5432/vml?sslmode=disable
-    DATABASE_URL: str = "postgresql+psycopg2://ml:ml@127.0.0.1:5432/vml?sslmode=disable"
+    # Core
+    API_BASE: str = Field(default="/api")
+    CORS_ORIGINS: List[str] = Field(default=["*"])
 
-    # ── Mongo (Queue) ────────────────────────────────────────────
+    # DB
+    POSTGRES_HOST: str = "127.0.0.1"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_DB: str = "vml"
+    POSTGRES_USER: str = "ml"
+    POSTGRES_PASSWORD: str = "ml"
+
+    @property
+    def SQLALCHEMY_DATABASE_URI(self) -> str:
+        return f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+
+    # Mongo
     MONGO_URI: str = "mongodb://127.0.0.1:27017"
     MONGO_DB: str = "vml"
     MONGO_COLLECTION: str = "jobs"
 
-    # ── MLflow ───────────────────────────────────────────────────
-    MLFLOW_URI: str = "http://127.0.0.1:5000"
+    # Artifacts / MLflow (Z 드라이브)
+    ARTIFACT_ROOT: str = r"Z:\vml_artifacts"
+    MLFLOW_URI: str = r"file:Z:\mlflow"
 
-    # ── 파일/아티팩트 루트 ───────────────────────────────────────
-    ARTIFACT_ROOT: str = "./artifacts"
-
-    # ── 인증 (JWT) ───────────────────────────────────────────────
+    # Auth / JWT
     JWT_SECRET: str = "change-me"
     JWT_ALG: str = "HS256"
-    JWT_EXPIRE_MIN: int = 60
-    JWT_REFRESH_EXPIRE_MIN: int = 60 * 24 * 14
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # 토큰 자체 만료
+    INACTIVITY_MINUTES: int = 10          # 비활성 최대 시간(프론트 + 토큰 TTL)
 
-    # ── UI에서 백엔드 접근용 베이스 (Dash 클라이언트에서 사용) ──
-    # 예: http://127.0.0.1:8065  (None이면 동일 오리진)
-    API_ORIGIN: Optional[AnyHttpUrl] = None
-
-    # ── 워커/큐 제한(예시) ───────────────────────────────────────
-    GLOBAL_MAX_RUNNING: int = 8
-    WORKER_RESERVE_CPU: int = 4
-    USER_MAX_CONCURRENT: int = 3
-
-    # Pydantic v2 설정
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        case_sensitive=False,
-        extra="ignore",
-    )
-
+    # Quotas
+    MAX_ACTIVE_RUNS_GLOBAL: int = 20
+    MAX_ACTIVE_RUNS_PER_USER: int = 5
+    RESERVED_CPUS: int = 4  # 워커 CPU 여유 예약(지표)
 
 settings = Settings()
