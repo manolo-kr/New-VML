@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 from typing import Dict, Any, List
+import numpy as np
+from sklearn.metrics import roc_auc_score, f1_score, accuracy_score, confusion_matrix
 
-
-def summarize_binary_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
-    keys = ["auc", "accuracy", "precision", "recall", "f1"]
-    return {k: metrics.get(k) for k in keys if k in metrics}
-
-
-def compare_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for r in runs:
-        row = {
-            "run_id": r.get("id"),
-            "status": r.get("status"),
-            **summarize_binary_metrics(r.get("metrics") or {})
-        }
-        out.append(row)
+def basic_classification_metrics(y_true: np.ndarray, y_pred: np.ndarray, proba: np.ndarray | None = None) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    try:
+        out["accuracy"] = float(accuracy_score(y_true, y_pred))
+        out["f1"] = float(f1_score(y_true, y_pred, average="weighted"))
+        if proba is not None and proba.ndim == 1:
+            out["auc"] = float(roc_auc_score(y_true, proba))
+    except Exception:
+        pass
+    try:
+        cm = confusion_matrix(y_true, y_pred)
+        out["confusion_matrix"] = cm.tolist()
+    except Exception:
+        pass
     return out
