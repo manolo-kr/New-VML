@@ -1,240 +1,443 @@
-# backend/app/ui/pages/analysis_train.py
+# backend/app/ui/pages/analysis_design.py
 
 from __future__ import annotations
 from typing import Dict, List, Any
-import json
-import urllib.parse as up
-import time
+import ast
 
 import dash
-from dash import html, dcc, callback, Input, Output, State, no_update
+from dash import html, dcc, callback, Input, Output, State, no_update, ALL
 import dash_bootstrap_components as dbc
 
 from app.ui.clients import api_client as api
 
-dash.register_page(__name__, path="/analysis/train", name="Training")
+dash.register_page(__name__, path="/analysis/design", name="Analysis Design")
 
-TERMINAL = {"succeeded", "failed", "error", "canceled", "finished", "completed"}
+MODEL_PRESETS = {
+    "xgboost:classification": {"n_estimators": 300, "max_depth": 6, "learning_rate": 0.1, "subsample": 0.8, "colsample_bytree": 0.8},
+    "xgboost:regression": {"n_estimators": 300, "max_depth": 6, "learning_rate": 0.1, "subsample": 0.8, "colsample_bytree": 0.8},
+    "lightgbm:classification": {"n_estimators": 400, "num_leaves": 31, "learning_rate": 0.05, "feature_fraction": 0.9},
+    "lightgbm:regression": {"n_estimators": 400, "num_leaves": 31, "learning_rate": 0.05, "feature_fraction": 0.9},
+    "catboost:classification": {"iterations": 400, "depth": 6, "learning_rate": 0.1},
+    "catboost:regression": {"iterations": 400, "depth": 6, "learning_rate": 0.1},
+    "randomforest:classification": {"n_estimators": 300, "max_depth": None, "min_samples_split": 2},
+    "randomforest:regression": {"n_estimators": 300, "max_depth": None, "min_samples_split": 2},
+    "logreg:classification": {"C": 1.0, "penalty": "l2", "max_iter": 200},
+    "svm:classification": {"C": 1.0, "kernel": "rbf", "gamma": "scale"},
+    "elasticnet:regression": {"alpha": 0.001, "l1_ratio": 0.5, "max_iter": 5000},
+    "knn:classification": {"n_neighbors": 15, "weights": "distance"},
+    "mlp:classification": {"hidden_layer_sizes": "(128, 64)", "activation": "relu", "max_iter": 300},
+    "mlp:regression": {"hidden_layer_sizes": "(128, 64)", "activation": "relu", "max_iter": 300},
+}
 
-def is_terminal(status: str | None) -> bool:
-    if not status:
-        return False
-    return status.lower() in TERMINAL
+MODEL_OPTIONS = [
+    {"label": "XGBoost", "value": "xgboost"},
+    {"label": "LightGBM", "value": "lightgbm"},
+    {"label": "CatBoost", "value": "catboost"},
+    {"label": "RandomForest", "value": "randomforest"},
+    {"label": "Logistic Regression", "value": "logreg"},
+    {"label": "SVM", "value": "svm"},
+    {"label": "ElasticNet", "value": "elasticnet"},
+    {"label": "KNN", "value": "knn"},
+    {"label": "MLP", "value": "mlp"},
+]
 
-def _badge(status: str | None) -> dbc.Badge:
-    s = (status or "-").lower()
-    color = {
-        "queued": "secondary",
-        "pending": "secondary",
-        "running": "primary",
-        "cancel_requested": "warning",
-        "canceled": "dark",
-        "failed": "danger",
-        "error": "danger",
-        "succeeded": "success",
-        "finished": "success",
-        "completed": "success",
-    }.get(s, "light")
-    return dbc.Badge(s if s != "-" else "-", color=color, className="text-uppercase")
+def _param_input(model_key: str, k: str, v):
+    return dbc.Col(
+        dbc.InputGroup([
+            dbc.InputGroupText(k),
+            dbc.Input(id={"type": "design-param", "model": model_key, "key": k}, value=v, type="text"),
+        ]),
+        md=4, className="mb-2"
+    )
 
-def _render_table(task_ids: List[str], run_ids: Dict[str, str], status_map: Dict[str, Any], meta: Dict[str, Dict[str, str]] | None) -> html.Div:
-    meta = meta or {}
-    header = html.Thead(html.Tr([
-        html.Th("Task ID"),
-        html.Th("Model"),
-        html.Th("Type"),
-        html.Th("File"),
-        html.Th("Run ID"),
-        html.Th("Status"),
-        html.Th("Progress"),
-        html.Th("Message"),
-        html.Th("Result"),
-    ]))
-    rows = []
-    for tid in task_ids or []:
-        rid = (run_ids or {}).get(tid)
-        info = (status_map or {}).get(rid or "", {}) if rid else {}
-        st = info.get("status")
-        prog = info.get("progress")
-        msg = info.get("message")
+def _build_params_accordion(selected_models: list[str], task_type: str):
+    if not selected_models:
+        return html.Div(html.Small("Select one or more models above."), className="text-muted")
 
-        m = (meta or {}).get(tid, {})
-        model = m.get("model_family") or (info.get("task_ref") or {}).get("model_family") or "-"
-        ttype = m.get("task_type") or (info.get("task_ref") or {}).get("task_type") or "-"
-        fname = m.get("dataset_original_name") or info.get("dataset_original_name") or "-"
+    items = []
+    for m in selected_models:
+        key = f"{m}:{task_type}"
+        params = MODEL_PRESETS.get(key, {})
+        rows = []
+        cols_row = []
+        for i, (k, v) in enumerate(params.items()):
+            cols_row.append(_param_input(m, k, v))
+            if (i + 1) % 3 == 0:
+                rows.append(dbc.Row(cols_row, className="g-2"))
+                cols_row = []
+        if cols_row:
+            rows.append(dbc.Row(cols_row, className="g-2"))
 
-        # 결과 페이지 링크 (run_id가 있어야)
-        result_link = (dcc.Link("Open", href=f"/analysis/results?run_id={rid}") if rid else html.Span("-"))
+        items.append(
+            dbc.AccordionItem(
+                children=rows or html.Div(html.Small("No preset parameters."), className="text-muted"),
+                title=f"{m} parameters",
+                item_id=m
+            )
+        )
+    return dbc.Accordion(children=items, start_collapsed=True, always_open=False, id="design-model-param-accordion")
 
-        rows.append(html.Tr([
-            html.Td(tid),
-            html.Td(model),
-            html.Td(ttype),
-            html.Td(fname),
-            html.Td(rid or "-"),
-            html.Td(_badge(st)),
-            html.Td(f"{int((prog or 0)*100)}%" if isinstance(prog, (int, float)) else "-"),
-            html.Td(msg or "-"),
-            html.Td(result_link),
-        ]))
-    return html.Div(dbc.Table([header, html.Tbody(rows)], bordered=True, hover=True, responsive=True, className="align-middle"))
 
 layout = dbc.Container([
-    dcc.Location(id="train-url"),
+    dcc.Store(id="design-project-id"),
+    dcc.Store(id="design-analysis-id"),
+    dcc.Store(id="design-dataset-uri"),
+    dcc.Store(id="design-columns"),
+    dcc.Store(id="design-features-selected"),
+    dcc.Store(id="design-original-name"),
 
-    dcc.Store(id="train-task-ids"),
-    dcc.Store(id="train-task-meta"),
-    dcc.Store(id="train-run-ids"),
-    dcc.Store(id="train-status"),
-    dcc.Store(id="train-busy"),
+    html.H3("Analysis - Design"),
 
-    dcc.Interval(id="train-poll", interval=2000, disabled=True),
+    dbc.Card([
+        dbc.CardHeader("1) Upload dataset"),
+        dbc.CardBody([
+            dbc.Row([
+                dbc.Col(dcc.Upload(
+                    id="design-upload",
+                    children=html.Div(["Drag and Drop or ", html.A("Select Files")]),
+                    multiple=False,
+                    style={"width":"100%","height":"80px","lineHeight":"80px","borderWidth":"1px",
+                           "borderStyle":"dashed","borderRadius":"6px","textAlign":"center"}
+                ), md=7),
+                dbc.Col(dbc.Button("Preview (modal)", id="design-btn-preview", color="secondary", outline=True), width="auto"),
+                dbc.Col(html.Div(id="design-upload-status", children=dbc.Badge("yet", color="warning")), width="auto"),
+                dbc.Col(html.Small("Allowed: .csv, .xlsx, .parquet"), width="auto")
+            ], className="g-2"),
+        ])
+    ], className="mb-3"),
+
+    dbc.Card([
+        dbc.CardHeader("2) Target & Features"),
+        dbc.CardBody([
+            dbc.Row([
+                dbc.Col(dbc.Select(id="design-sel-target", placeholder="Select target column"), md=4),
+                dbc.Col(dbc.Button("Select Features (X)", id="open-feature-modal", color="info"), md=3),
+                dbc.Col(html.Div(id="design-feature-summary", className="text-muted"), md=5),
+            ], className="g-2"),
+        ])
+    ], className="mb-3"),
+
+    dbc.Card([
+        dbc.CardHeader("3) Split & sampling"),
+        dbc.CardBody([
+            dbc.Row([
+                dbc.Col(dbc.InputGroup([dbc.InputGroupText("Test size"), dbc.Input(id="design-split-test", type="number", value=0.2, step=0.05, min=0.05, max=0.9)]), md=4),
+                dbc.Col(dbc.InputGroup([dbc.InputGroupText("Random state"), dbc.Input(id="design-split-seed", type="number", value=42, step=1)]), md=4),
+                dbc.Col(dbc.InputGroup([dbc.InputGroupText("Cap per class"), dbc.Input(id="design-sample-cap", type="number", value=10000, step=1000, min=1000)]), md=4),
+            ], className="g-2"),
+            dbc.Row([
+                dbc.Col(dbc.Checklist(
+                    id="design-sample-enable",
+                    options=[{"label": "Enable stratified capping per class", "value": "on"}],
+                    value=[],
+                ), md=12)
+            ], className="g-2"),
+            html.Small("대용량 데이터에서 클래스별 샘플 수를 제한(불균형 완화 + 속도 향상)"),
+        ])
+    ], className="mb-3"),
+
+    dbc.Card([
+        dbc.CardHeader("4) Task & Models"),
+        dbc.CardBody([
+            dbc.Row([
+                dbc.Col(dbc.Select(
+                    id="design-task-type",
+                    options=[{"label":"classification","value":"classification"},{"label":"regression","value":"regression"}],
+                    value="classification"
+                ), md=3),
+                dbc.Col(dbc.Checklist(
+                    id="design-models",
+                    options=MODEL_OPTIONS,
+                    value=["xgboost"],
+                    inline=True,
+                    style={"marginTop": "6px"}
+                ), md=9),
+            ], className="g-2"),
+            html.Div(id="design-model-params", className="mt-2"),
+        ])
+    ], className="mb-3"),
 
     dbc.Row([
-        dbc.Col(dbc.Button("Train All", id="btn-start-all", color="primary"), width="auto"),
-        dbc.Col(dbc.Button("Cancel All", id="btn-cancel-all", color="danger", outline=True), width="auto"),
-        dbc.Col(html.Div(id="train-mode-banner"), width=True),
-    ], className="g-2 mb-3"),
+        dbc.Col(dbc.Button("Create Analysis & Task(s)", id="design-btn-create", color="primary", disabled=True), width="auto"),
+        dbc.Col(html.Div(id="design-created-info"), width=True),
+    ], className="g-2 mb-4"),
 
-    html.Div(id="train-contents"),
+    dbc.Modal([
+        dbc.ModalHeader(dbc.ModalTitle("Dataset Preview")),
+        dbc.ModalBody(html.Div(id="design-preview-table", style={"overflowX": "auto","overflowY": "auto","maxHeight": "70vh"})),
+        dbc.ModalFooter(dbc.Button("Close", id="preview-close", className="ms-auto", n_clicks=0)),
+    ], id="design-preview-modal", is_open=False, size="xl", scrollable=False, centered=True),
+
+    dbc.Modal([
+        dbc.ModalHeader(dbc.ModalTitle("Select Features (X)")),
+        dbc.ModalBody([
+            html.Div(
+                id="feature-checklist-wrapper",
+                children=dbc.Checklist(id="feature-checklist", options=[], value=[]),
+                style={"maxHeight":"40vh","overflowY":"auto","overflowX":"auto","whiteSpace":"nowrap"}
+            ),
+            dbc.ButtonGroup([
+                dbc.Button("Select All", id="feature-select-all", color="secondary"),
+                dbc.Button("Clear All", id="feature-clear-all", color="secondary", outline=True),
+                dbc.Button("Apply", id="feature-apply", color="primary"),
+            ], className="mt-2"),
+        ]),
+    ], id="feature-modal", is_open=False, size="lg", scrollable=True, centered=True),
 ], fluid=True)
 
 
-@callback(
-    Output("train-task-ids", "data"),
-    Output("train-task-meta", "data"),
-    Input("train-url", "href"),
-    prevent_initial_call=False
-)
-def _init_from_url(href):
-    task_ids: List[str] = []
-    meta: Dict[str, Dict[str, str]] = {}
-    if href:
-        q = up.urlparse(href).query
-        params = dict(up.parse_qsl(q, keep_blank_values=True))
-        if "task_ids" in params and params["task_ids"]:
-            task_ids = [t for t in params["task_ids"].split(",") if t]
-        elif "task_id" in params and params["task_id"]:
-            task_ids = [params["task_id"]]
-        if "meta" in params and params["meta"]:
+# ------------------ Helpers ------------------
+def _safe_parse_val(s):
+    if isinstance(s, str):
+        t = s.strip()
+        try:
+            return ast.literal_eval(t)
+        except Exception:
             try:
-                meta = json.loads(up.unquote_plus(params["meta"]))
+                return float(t) if ("." in t or "e" in t.lower()) else int(t)
             except Exception:
-                meta = {}
-    return task_ids, meta or {}
+                return s
+    return s
+
+
+# ------------------ Callbacks ------------------
+@callback(Output("design-project-id","data"), Input("gs-project","data"))
+def _init_proj(p):
+    return (p or {}).get("id")
 
 
 @callback(
-    Output("train-run-ids", "data"),
-    Input("btn-start-all", "n_clicks"),
-    Input("btn-cancel-all", "n_clicks"),
-    State("train-task-ids", "data"),
-    State("train-run-ids", "data"),
-    State("train-status", "data"),
+    Output("design-dataset-uri", "data"),
+    Output("design-original-name", "data"),
+    Output("design-upload-status", "children"),
+    Input("design-upload", "contents"),
+    State("design-upload", "filename"),
     State("gs-auth", "data"),
     prevent_initial_call=True
 )
-def _control_runs(n_start, n_cancel, task_ids, run_ids, status_map, auth):
-    trig = dash.ctx.triggered_id
-    task_ids = task_ids or []
-    run_ids = (run_ids or {}).copy()
-    status_map = status_map or {}
+def _on_upload(contents, filename, auth):
+    if not contents:
+        return no_update, no_update, dbc.Badge("yet", color="warning")
     token = (auth or {}).get("access_token")
+    try:
+        info = api.upload_file_from_contents(contents, filename or "uploaded.dat", token=token)
+        return info["dataset_uri"], info.get("original_name"), dbc.Badge("ready", color="primary")
+    except Exception:
+        return no_update, no_update, dbc.Badge("fail", color="danger")
 
-    if trig == "btn-start-all":
-        run_ids = {}
-        now_tag = str(int(time.time()))
-        for tid in task_ids:
-            try:
-                resp = api.train_task(
-                    tid,
-                    hpo=None,
-                    extra={"idempotency_key": f"start:{tid}:{now_tag}", "force": True},
-                    token=token
-                )
-                new_rid = resp.get("run_id")
-                if new_rid:
-                    run_ids[tid] = new_rid
-            except Exception:
-                pass
-        return run_ids
 
-    if trig == "btn-cancel-all":
-        for rid in (run_ids or {}).values():
-            try:
-                api.cancel_run(rid, token=token)
-            except Exception:
-                pass
-        return run_ids
+@callback(
+    Output("design-preview-modal", "is_open"),
+    Output("design-preview-table","children"),
+    Input("design-btn-preview","n_clicks"),
+    Input("preview-close","n_clicks"),
+    State("design-preview-modal","is_open"),
+    State("design-dataset-uri","data"),
+    State("gs-auth","data"),
+    prevent_initial_call=True
+)
+def _toggle_preview(open_clicks, close_clicks, is_open, dataset_uri, auth):
+    trig = dash.ctx.triggered_id
+    token = (auth or {}).get("access_token")
+    if trig == "design-btn-preview":
+        if not dataset_uri:
+            return False, dbc.Alert("Please upload a dataset first.", color="warning")
+        prev = api.preview_dataset(dataset_uri, 50, token=token)
+        header = html.Tr([html.Th(c, style={"whiteSpace": "nowrap"}) for c in prev["columns"]])
+        rows = [html.Tr([html.Td(v, style={"whiteSpace": "nowrap"}) for v in r]) for r in prev["rows"]]
+        table = dbc.Table([html.Thead(header), html.Tbody(rows)], bordered=True, hover=True, responsive=False)
+        return True, table
+    if trig == "preview-close":
+        return False, no_update
+    return is_open, no_update
 
+
+@callback(
+    Output("design-sel-target","options"),
+    Output("feature-checklist","options"),
+    Output("design-columns","data"),
+    Input("design-dataset-uri","data"),
+    State("gs-auth","data"),
+    prevent_initial_call=True
+)
+def _fill_columns(dataset_uri, auth):
+    if not dataset_uri:
+        return [], [], None
+    token = (auth or {}).get("access_token")
+    prev = api.preview_dataset(dataset_uri, 50, token=token)
+    cols = prev["columns"]
+    opts = [{"label": c, "value": c} for c in cols]
+    return opts, opts, cols
+
+
+@callback(
+    Output("feature-modal","is_open"),
+    Input("open-feature-modal","n_clicks"),
+    Input("feature-apply","n_clicks"),
+    State("feature-modal","is_open"),
+    prevent_initial_call=True
+)
+def _feature_modal_is_open(open_n, apply_n, is_open):
+    trig = dash.ctx.triggered_id
+    if trig == "open-feature-modal":
+        return True
+    if trig == "feature-apply":
+        return False
+    return is_open
+
+
+@callback(
+    Output("feature-checklist", "value"),
+    Input("feature-checklist", "options"),
+    Input("feature-select-all", "n_clicks"),
+    Input("feature-clear-all", "n_clicks"),
+    Input("design-sel-target", "value"),
+    State("feature-checklist", "value"),
+    prevent_initial_call=True
+)
+def _feature_select_control(options, sel_all, clr_all, target, current):
+    trig = dash.ctx.triggered_id
+    opts = options or []
+    all_vals = [o["value"] for o in opts]
+
+    def wo_t(vals):
+        return [v for v in vals if v != target] if target else vals
+
+    if trig == "feature-select-all":
+        return wo_t(all_vals)
+    if trig == "feature-clear-all":
+        return []
+    if trig == "feature-checklist":
+        return wo_t(all_vals)
+    if trig == "design-sel-target":
+        return wo_t(current or [])
+    if trig == "feature-checklist":
+        return wo_t(all_vals)
     return no_update
 
 
 @callback(
-    Output("train-status", "data"),
-    Input("train-poll", "n_intervals"),
-    State("train-run-ids", "data"),
-    State("gs-auth", "data"),
+    Output("design-features-selected","data"),
+    Output("design-feature-summary","children"),
+    Input("feature-apply","n_clicks"),
+    Input("design-sel-target","value"),
+    State("feature-checklist","value"),
     prevent_initial_call=True
 )
-def _poll_status(_n, run_ids, auth):
-    run_ids = run_ids or {}
-    out: Dict[str, Any] = {}
-    if not run_ids:
-        return out
+def _apply_features(n_apply, target, selected):
+    selected = (selected or [])
+    if target:
+        selected = [c for c in selected if c != target]
+    summary = (html.Span("Features: (none)", className="text-muted")
+               if not selected else
+               html.Span(f"Features: {len(selected)} selected", className="text-muted"))
+    return selected, summary
+
+
+@callback(
+    Output("design-model-params", "children"),
+    Input("design-models", "value"),
+    Input("design-task-type", "value"),
+)
+def _render_model_params(models, task_type):
+    models = models or []
+    return _build_params_accordion(models, task_type or "classification")
+
+
+@callback(
+    Output("design-btn-create","disabled"),
+    Input("design-dataset-uri","data"),
+    Input("design-sel-target","value"),
+)
+def _btn_enable(uri, target):
+    return not (bool(uri) and bool(target))
+
+
+@callback(
+    Output("design-analysis-id","data"),
+    Output("design-created-info","children"),
+    Input("design-btn-create","n_clicks"),
+    State("design-project-id","data"),
+    State("design-dataset-uri","data"),
+    State("design-original-name","data"),
+    State("design-sel-target","value"),
+    State("design-features-selected","data"),
+    State("design-task-type","value"),
+    State("design-models","value"),
+    State("design-split-test","value"),
+    State("design-split-seed","value"),
+    State("design-sample-enable","value"),
+    State("design-sample-cap","value"),
+    State({"type":"design-param","model":ALL,"key":ALL}, "id"),
+    State({"type":"design-param","model":ALL,"key":ALL}, "value"),
+    State("gs-auth","data"),
+    prevent_initial_call=True
+)
+def _create_all(n, project_id, dataset_uri, original_name, target, features, task_type, model_list,
+                test_size, seed, sample_enable, sample_cap, param_ids, param_vals, auth):
+    if not (project_id and dataset_uri and target and model_list):
+        return dash.no_update, dbc.Alert("Missing project/dataset/target/models", color="danger")
+
     token = (auth or {}).get("access_token")
-    for rid in run_ids.values():
-        try:
-            info = api.get_run(rid, token=token)
-            out[rid] = info or {}
-        except Exception:
-            out[rid] = {"status": "error", "message": "fetch failed"}
-    return out
 
+    split = {"test_size": float(test_size or 0.2), "random_state": int(seed or 42)}
+    sampling = None
+    if sample_enable and "on" in (sample_enable or []):
+        sampling = {"method": "stratified_cap", "cap_per_class": int(sample_cap or 10000)}
 
-@callback(
-    Output("train-poll", "disabled"),
-    Output("train-busy", "data"),
-    Input("train-run-ids", "data"),
-    Input("train-status", "data"),
-)
-def _derive_poll_and_busy(run_ids, status_map):
-    run_ids = run_ids or {}
-    status_map = status_map or {}
-    if not run_ids:
-        return True, False
-    any_active = False
-    for rid in run_ids.values():
-        st = (status_map.get(rid) or {}).get("status")
-        if not is_terminal(st):
-            any_active = True
-            break
-    return (not any_active), any_active
+    overrides = {}
+    if param_ids and param_vals:
+        for pid, val in zip(param_ids, param_vals):
+            m = pid.get("model")
+            k = pid.get("key")
+            if not m or not k:
+                continue
+            overrides.setdefault(m, {})[k] = _safe_parse_val(val)
 
+    a = api.create_analysis(project_id, "My Analysis", dataset_uri,
+                            dataset_original_name=original_name, token=token)
+    aid = a["id"]
 
-@callback(
-    Output("train-mode-banner", "children"),
-    Output("train-contents", "children"),
-    Input("train-task-ids", "data"),
-    Input("train-run-ids", "data"),
-    Input("train-status", "data"),
-    Input("train-task-meta", "data"),
-)
-def _render(task_ids, run_ids, status_map, meta):
-    task_ids = task_ids or []
-    run_ids = run_ids or {}
-    status_map = status_map or {}
-    meta = meta or {}
+    created = []
+    for model_family in (model_list or []):
+        preset_key = f"{model_family}:{task_type}"
+        model_params = MODEL_PRESETS.get(preset_key, {}).copy()
+        if model_family in overrides:
+            for k, v in overrides[model_family].items():
+                if v is not None and v != "":
+                    model_params[k] = v
 
-    any_active = False
-    for rid in run_ids.values():
-        st = (status_map.get(rid) or {}).get("status")
-        if not is_terminal(st):
-            any_active = True
-            break
-    banner = (dbc.Alert("Running... polling statuses", color="info", className="py-2")
-              if any_active else
-              dbc.Alert("Idle. Click Train All to enqueue runs.", color="secondary", className="py-2"))
+        t = api.create_task(
+            analysis_id=aid,
+            task_type=task_type,
+            target=target,
+            model_family=model_family,
+            model_params=model_params,
+            features=features or None,
+            split=split,
+            sampling=sampling,
+            token=token,
+        )
+        created.append(t)
 
-    table = _render_table(task_ids, run_ids, status_map, meta)
-    return banner, table
+    # Train All 링크 + 각 Task의 Go to Train 링크
+    import urllib.parse as up
+    from dash import dcc
+    task_ids = ",".join([t["id"] for t in created])
+    meta = {
+        t["id"]: {
+            "model_family": t["model_family"],
+            "task_type": t["task_type"],
+            "dataset_original_name": original_name or "-"
+        } for t in created
+    }
+    meta_q = up.quote_plus(json.dumps(meta))
+
+    msg = [html.Div(f"Analysis created: {aid}"),
+           html.Div(dcc.Link("➡ Train ALL", href=f"/analysis/train?task_ids={task_ids}&meta={meta_q}"))] + [
+        html.Div([
+            f"Task: {t['id']} ({t['model_family']}, {t['task_type']}) — ",
+            dcc.Link("Go to Train →", href=f"/analysis/train?task_id={t['id']}&meta={meta_q}")
+        ]) for t in created
+    ]
+    return aid, dbc.Alert(msg, color="success")
