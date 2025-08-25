@@ -2,52 +2,61 @@
 
 from __future__ import annotations
 from typing import Any, Dict
-
 import dash
 from dash import html, dcc, callback, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
+import requests
+import os
 
-from app.ui.clients import api_client as api
+API_DIR = os.getenv("API_DIR", "http://127.0.0.1:8065").rstrip("/")
+API_BASE = os.getenv("API_BASE", "/api").rstrip("/")
 
-dash.register_page(__name__, path="/auth/login", name="Login")
+dash.register_page(__name__, path="/login", name="Login")
+
+def _url(p: str) -> str:
+    if not p.startswith("/"):
+        p = "/" + p
+    return f"{API_DIR}{API_BASE}{p}"
 
 layout = dbc.Container([
-    html.H2("Login"),
+    dcc.Location(id="login-url"),
+    dcc.Store(id="gs-auth", storage_type="session"),
     dbc.Row([
-        dbc.Col(dbc.InputGroup([
-            dbc.InputGroupText("Username"),
-            dbc.Input(id="login-username", placeholder="username"),
-        ]), md=6)
-    ], className="mb-2"),
-    dbc.Row([
-        dbc.Col(dbc.InputGroup([
-            dbc.InputGroupText("Password"),
-            dbc.Input(id="login-password", type="password", placeholder="password"),
-        ]), md=6)
-    ], className="mb-3"),
-    dbc.Button("Login", id="login-submit", color="primary"),
-    html.Div(id="login-alert", className="mt-3"),
-    dcc.Store(id="gs-auth", storage_type="session"),  # 보장(중복 생성 허용)
-    dcc.Location(id="login-redirect"),
+        dbc.Col(width=3),
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Sign In"),
+            dbc.CardBody([
+                dbc.FormFloating([
+                    dbc.Input(id="login-username", placeholder="username", type="text"),
+                    dbc.Label("Username"),
+                ], className="mb-2"),
+                dbc.FormFloating([
+                    dbc.Input(id="login-password", placeholder="password", type="password"),
+                    dbc.Label("Password"),
+                ], className="mb-3"),
+                dbc.Button("Login", id="btn-login", color="primary", className="w-100"),
+                html.Div(id="login-alert", className="mt-3"),
+            ])
+        ], className="mt-5"), width=6),
+        dbc.Col(width=3),
+    ])
 ], fluid=True)
 
 @callback(
-    Output("gs-auth","data"),
-    Output("login-alert","children"),
-    Output("login-redirect","href"),
-    Input("login-submit","n_clicks"),
-    State("login-username","value"),
-    State("login-password","value"),
+    Output("gs-auth", "data"),
+    Output("login-alert", "children"),
+    Input("btn-login", "n_clicks"),
+    State("login-username", "value"),
+    State("login-password", "value"),
     prevent_initial_call=True
 )
-def _do_login(n, u, p):
-    if not (u and p):
-        return no_update, dbc.Alert("Enter username/password", color="warning"), no_update
-    # 내부 허용 모드라면 백엔드 토큰이 옵션일 수 있지만, 여긴 형태만 유지
+def _do_login(n, username, password):
+    if not username or not password:
+        return no_update, dbc.Alert("Enter username and password", color="warning")
     try:
-        # 가짜 성공(실서비스에선 /auth/login 호출 후 token 저장)
-        token = {"access_token": "INTERNAL_MODE", "user": {"username": u}}
-        # api.set_token(...) 을 사용할 수도 있음
-        return token, dbc.Alert("Logged in (internal mode).", color="success"), "/"
+        r = requests.post(_url("/auth/login"), json={"username": username, "password": password}, timeout=20)
+        r.raise_for_status()
+        bundle = r.json()
+        return bundle, dbc.Alert("Login success", color="success")
     except Exception as e:
-        return no_update, dbc.Alert(f"Login failed: {e}", color="danger"), no_update
+        return no_update, dbc.Alert(f"Login failed: {e}", color="danger")
