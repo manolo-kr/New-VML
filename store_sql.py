@@ -1,20 +1,20 @@
 # backend/app/store_sql.py
 
 from __future__ import annotations
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
-from uuid import uuid4
 from sqlmodel import Session, select
+from app.models import Project, Analysis, MLTask
 
-from .models import Project, Analysis, MLTask, User
 
 class Repo:
     def __init__(self, s: Session):
         self.s = s
 
-    # Projects
+    # ── Projects ─────────────────────────────────────────────
     def create_project(self, name: str) -> Dict[str, Any]:
-        p = Project(id=uuid4().hex, name=name, created_at=datetime.utcnow())
+        now = datetime.utcnow()
+        p = Project(id=self._new_id("proj"), name=name, created_at=now)
         self.s.add(p)
         self.s.commit()
         self.s.refresh(p)
@@ -24,31 +24,20 @@ class Repo:
         rows = self.s.exec(select(Project).order_by(Project.created_at.desc())).all()
         return [r.dict() for r in rows]
 
-    def delete_project_cascade(self, project_id: str) -> Dict[str, Any]:
-        # 안전한 종속 삭제
-        anns = self.s.exec(select(Analysis).where(Analysis.project_id == project_id)).all()
-        ana_ids = [a.id for a in anns]
-        if ana_ids:
-            for a in anns:
-                tasks = self.s.exec(select(MLTask).where(MLTask.analysis_id == a.id)).all()
-                for t in tasks:
-                    self.s.delete(t)
-                self.s.delete(a)
-        proj = self.s.get(Project, project_id)
-        if proj:
-            self.s.delete(proj)
-        self.s.commit()
-        return {"ok": True, "deleted_project_id": project_id, "deleted_analyses": len(ana_ids)}
+    def get_project(self, pid: str) -> Optional[Project]:
+        return self.s.get(Project, pid)
 
-    # Analyses
-    def create_analysis(self, project_id: str, name: str, dataset_uri: str, dataset_original_name: Optional[str] = None) -> Dict[str, Any]:
+    # ── Analyses ─────────────────────────────────────────────
+    def create_analysis(self, project_id: str, name: str, dataset_uri: str,
+                        dataset_original_name: Optional[str] = None) -> Dict[str, Any]:
+        now = datetime.utcnow()
         a = Analysis(
-            id=uuid4().hex,
+            id=self._new_id("ana"),
             project_id=project_id,
             name=name,
             dataset_uri=dataset_uri,
             dataset_original_name=dataset_original_name,
-            created_at=datetime.utcnow()
+            created_at=now,
         )
         self.s.add(a)
         self.s.commit()
@@ -56,22 +45,20 @@ class Repo:
         return a.dict()
 
     def list_analyses(self, project_id: str) -> List[Dict[str, Any]]:
-        rows = self.s.exec(select(Analysis).where(Analysis.project_id == project_id).order_by(Analysis.created_at.desc())).all()
+        rows = self.s.exec(
+            select(Analysis).where(Analysis.project_id == project_id).order_by(Analysis.created_at.desc())
+        ).all()
         return [r.dict() for r in rows]
 
-    def get_analysis(self, analysis_id: str) -> Optional[Analysis]:
-        return self.s.get(Analysis, analysis_id)
+    def get_analysis(self, aid: str) -> Optional[Analysis]:
+        return self.s.get(Analysis, aid)
 
-    # Tasks
-    def create_task(self,
-                    analysis_id: str,
-                    task_type: str,
-                    target: str,
-                    model_family: str,
-                    split: Dict[str, Any],
-                    model_params: Dict[str, Any]) -> Dict[str, Any]:
+    # ── Tasks ────────────────────────────────────────────────
+    def create_task(self, analysis_id: str, task_type: str, target: str,
+                    model_family: str, split: Dict[str, Any], model_params: Dict[str, Any]) -> Dict[str, Any]:
+        now = datetime.utcnow()
         t = MLTask(
-            id=uuid4().hex,
+            id=self._new_id("task"),
             analysis_id=analysis_id,
             task_type=task_type,
             target=target,
@@ -79,16 +66,18 @@ class Repo:
             model_family=model_family,
             model_params=model_params or {},
             status="ready",
-            created_at=datetime.utcnow()
+            created_at=now,
         )
         self.s.add(t)
         self.s.commit()
         self.s.refresh(t)
         return t.dict()
 
-    def get_task(self, task_id: str) -> Optional[MLTask]:
-        return self.s.get(MLTask, task_id)
+    def get_task(self, tid: str) -> Optional[MLTask]:
+        return self.s.get(MLTask, tid)
 
-    # Users
-    def get_user_by_username(self, username: str) -> Optional[User]:
-        return self.s.exec(select(User).where(User.username == username)).first()
+    # ── util ────────────────────────────────────────────────
+    @staticmethod
+    def _new_id(prefix: str) -> str:
+        from uuid import uuid4
+        return f"{prefix}_{uuid4().hex[:12]}"
