@@ -1,5 +1,24 @@
 Process SpawnProcess-1:
 Traceback (most recent call last):
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\pydantic_settings\sources\base.py", line 490, in __call__
+    field_value = self.prepare_field_value(field_name, field, field_value, value_is_complex)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\pydantic_settings\sources\providers\env.py", line 120, in prepare_field_value
+    raise e
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\pydantic_settings\sources\providers\env.py", line 117, in prepare_field_value
+    value = self.decode_complex_value(field_name, field, value)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\pydantic_settings\sources\base.py", line 186, in decode_complex_value
+    return json.loads(value)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\json\__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\json\decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\json\decoder.py", line 355, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
   File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\multiprocessing\process.py", line 314, in _bootstrap
     self.run()
   File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\multiprocessing\process.py", line 108, in run
@@ -30,12 +49,14 @@ Traceback (most recent call last):
   File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
   File "C:\Users\cwoh\Desktop\01. Project\03. Platform\3. Test\backend\app\main.py", line 8, in <module>
     from app.config import settings
-  File "C:\Users\cwoh\Desktop\01. Project\03. Platform\3. Test\backend\app\config.py", line 4, in <module>
-    from pydantic import BaseSettings, Field, AnyHttpUrl
-  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\pydantic\__init__.py", line 426, in __getattr__
-    return _getattr_migration(attr_name)
-  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\pydantic\_migration.py", line 296, in wrapper
-    raise PydanticImportError(
-pydantic.errors.PydanticImportError: `BaseSettings` has been moved to the `pydantic-settings` package. See https://docs.pydantic.dev/2.11/migration/#basesettings-has-moved-to-pydantic-settings for more details.
-
-For further information visit https://errors.pydantic.dev/2.11/u/import-error
+  File "C:\Users\cwoh\Desktop\01. Project\03. Platform\3. Test\backend\app\config.py", line 52, in <module>
+    settings = Settings()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\pydantic_settings\main.py", line 189, in __init__
+    **__pydantic_self__._settings_build_values(
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\pydantic_settings\main.py", line 424, in _settings_build_values
+    source_state = source()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\pydantic_settings\sources\providers\dotenv.py", line 106, in __call__
+    data: dict[str, Any] = super().__call__()
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\pydantic_settings\sources\base.py", line 492, in __call__
+    raise SettingsError(
+pydantic_settings.exceptions.SettingsError: error parsing value for field "CORS_ORIGINS" from source "DotEnvSettingsSource"
