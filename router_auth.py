@@ -1,66 +1,22 @@
 # backend/app/auth/router_auth.py
 
 from __future__ import annotations
-from fastapi import APIRouter, HTTPException, Depends
-from sqlmodel import Session, select
-from typing import Dict, Any
+from fastapi import APIRouter, HTTPException
+from app.auth.schemas import LoginRequest, TokenResponse
+from app.services.auth_utils import create_access_token, verify_password, hash_password
 
-from ..db import get_session
-from ..models import User
-from ..services.auth_utils import (
-    verify_password, create_access_token, create_refresh_token, decode_token
-)
-from .schemas import LoginRequest, TokenPair, RefreshRequest, UserOut
+router_auth = APIRouter(prefix="/auth", tags=["auth"])
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+# 데모 계정(실운영에선 DB 사용자 테이블 사용)
+_USERS = {
+    "admin": hash_password("admin"),
+    "ml": hash_password("ml"),
+}
 
-def _user_out(u: User) -> UserOut:
-    return UserOut(id=u.id, username=u.username, role=u.role or "user", meta=u.meta or {})
-
-@router.post("/login", response_model=TokenPair)
-def login(body: LoginRequest, s: Session = Depends(get_session)) -> TokenPair:
-    q = select(User).where(User.username == body.username)
-    u = s.exec(q).first()
-    if not u or not verify_password(body.password, u.password_hash):
-        raise HTTPException(status_code=401, detail="invalid credentials")
-
-    access, access_exp = create_access_token(u.id, {"role": u.role or "user"})
-    refresh, refresh_exp = create_refresh_token(u.id, {"role": u.role or "user"})
-    return TokenPair(
-        access_token=access,
-        access_exp=access_exp,
-        refresh_token=refresh,
-        refresh_exp=refresh_exp,
-    )
-
-@router.post("/refresh", response_model=TokenPair)
-def refresh(body: RefreshRequest, s: Session = Depends(get_session)) -> TokenPair:
-    try:
-        payload: Dict[str, Any] = decode_token(body.refresh_token)
-    except Exception:
-        raise HTTPException(status_code=401, detail="invalid refresh token")
-
-    if payload.get("typ") != "refresh":
-        raise HTTPException(status_code=400, detail="not a refresh token")
-
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="invalid refresh token")
-
-    u = s.get(User, user_id)
-    if not u:
-        raise HTTPException(status_code=401, detail="user not found")
-
-    access, access_exp = create_access_token(u.id, {"role": u.role or "user"})
-    refresh, refresh_exp = create_refresh_token(u.id, {"role": u.role or "user"})
-
-    return TokenPair(
-        access_token=access,
-        access_exp=access_exp,
-        refresh_token=refresh,
-        refresh_exp=refresh_exp,
-    )
-
-@router.post("/logout")
-def logout() -> dict:
-    return {"ok": True}
+@router_auth.post("/login", response_model=TokenResponse)
+def login(body: LoginRequest):
+    h = _USERS.get(body.username)
+    if not h or not verify_password(body.password, h):
+        raise HTTPException(401, "invalid credentials")
+    token = create_access_token(sub=body.username, extra={"role": "user"})
+    return TokenResponse(access_token=token)
