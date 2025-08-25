@@ -1,4 +1,4 @@
- Process SpawnProcess-3:
+Process SpawnProcess-5:
 Traceback (most recent call last):
   File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\multiprocessing\process.py", line 314, in _bootstrap
     self.run()
@@ -30,16 +30,10 @@ Traceback (most recent call last):
   File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
   File "C:\Users\cwoh\Desktop\01. Project\03. Platform\3. Test\backend\app\main.py", line 29, in <module>
     dash_app = build_dash_app()
-  File "C:\Users\cwoh\Desktop\01. Project\03. Platform\3. Test\backend\app\ui\app.py", line 20, in build_dash_app
-    app = dash.Dash(
-  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\dash\dash.py", line 629, in __init__
-    self.init_app()
-  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\dash\dash.py", line 740, in init_app
-    self.enable_pages()
-  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\dash\dash.py", line 2379, in enable_pages
-    _import_layouts_from_pages(self.config.pages_folder)
-  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\dash\_pages.py", line 428, in _import_layouts_from_pages
-    for root, dirs, files in os.walk(pages_folder):
-  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\os.py", line 343, in walk
-    return _walk(fspath(top), topdown, onerror, followlinks)
-TypeError: expected str, bytes or os.PathLike object, not NoneType
+  File "C:\Users\cwoh\Desktop\01. Project\03. Platform\3. Test\backend\app\ui\app.py", line 73, in build_dash_app
+    _navbar(),
+  File "C:\Users\cwoh\Desktop\01. Project\03. Platform\3. Test\backend\app\ui\app.py", line 36, in _navbar
+    dbc.NavbarText([
+  File "C:\Users\cwoh\AppData\Local\Programs\Python\Python310\lib\site-packages\dash_bootstrap_components\__init__.py", line 52, in __getattr__
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+AttributeError: module 'dash_bootstrap_components' has no attribute 'NavbarText'
