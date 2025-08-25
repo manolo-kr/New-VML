@@ -52,21 +52,15 @@ def _metrics_table(metrics: Dict[str, Any]) -> html.Div:
         bordered=True, hover=True, responsive=True, className="align-middle"
     )
 
-def _try_get_json(run_id: str, path: str) -> Optional[Any]:
+def _try_get_json(run_id: str, name: str) -> Optional[Any]:
     try:
-        return api.get_artifact_json(run_id, path)
+        return api.get_artifact_json(run_id, name)
     except Exception:
         return None
 
 # ---------- parsers for artifacts → (x, y, ...)
 
 def _parse_roc(obj: Any) -> Optional[Tuple[List[float], List[float]]]:
-    """
-    Accepts:
-    - {"fpr":[...], "tpr":[...]}
-    - [{"fpr":v, "tpr":v}, ...]
-    - {"x":[...], "y":[...]}  (fallback)
-    """
     if not obj:
         return None
     if isinstance(obj, dict):
@@ -82,12 +76,6 @@ def _parse_roc(obj: Any) -> Optional[Tuple[List[float], List[float]]]:
     return None
 
 def _parse_pr(obj: Any) -> Optional[Tuple[List[float], List[float]]]:
-    """
-    Accepts:
-    - {"precision":[...], "recall":[...]}
-    - [{"precision":v, "recall":v}, ...]
-    - {"x":[...], "y":[...]} as recall/precision
-    """
     if not obj:
         return None
     if isinstance(obj, dict):
@@ -106,12 +94,6 @@ def _parse_pr(obj: Any) -> Optional[Tuple[List[float], List[float]]]:
     return None
 
 def _parse_confusion(obj: Any) -> Optional[Tuple[List[str], List[str], List[List[float]]]]:
-    """
-    Accepts:
-    - {"matrix":[[...],...], "labels":[...]}  (labels optional)
-    - [[...],...]  (raw)
-    - {"data":[[...],...], "x_labels":[...], "y_labels":[...]}
-    """
     if not obj:
         return None
     if isinstance(obj, dict):
@@ -132,11 +114,6 @@ def _parse_confusion(obj: Any) -> Optional[Tuple[List[str], List[str], List[List
     return None
 
 def _parse_ks(obj: Any) -> Optional[Tuple[List[float], List[float], List[float]]]:
-    """
-    Accepts:
-    - {"threshold":[...], "cum_good":[...], "cum_bad":[...]}
-    - [{"threshold":t,"cum_good":g,"cum_bad":b}, ...]
-    """
     if not obj:
         return None
     if isinstance(obj, dict):
@@ -154,12 +131,6 @@ def _parse_ks(obj: Any) -> Optional[Tuple[List[float], List[float], List[float]]
     return None
 
 def _parse_thresholds(obj: Any) -> Optional[Tuple[List[float], Dict[str, List[float]]]]:
-    """
-    Accepts:
-    - {"threshold":[...], "<metric>":[...], ...}
-    - [{"threshold":t, "tpr":..., "fpr":..., "precision":..., ...}, ...]
-    Returns (thresholds, series_map)
-    """
     if not obj:
         return None
     if isinstance(obj, dict):
@@ -199,9 +170,16 @@ def _fig_pr(recall: List[float], precision: List[float]) -> go.Figure:
     fig.update_layout(xaxis_title="Recall", yaxis_title="Precision", template="plotly_white", margin=dict(l=40,r=10,t=10,b=40))
     return fig
 
+def _row_normalize(mat: List[List[float]]) -> List[List[float]]:
+    out = []
+    for row in mat:
+        s = float(sum(row)) if row else 0.0
+        out.append([ (v / s if s > 0 else 0.0) for v in row ])
+    return out
+
 def _fig_confusion(xlab: List[str], ylab: List[str], mat: List[List[float]]) -> go.Figure:
     fig = go.Figure(data=go.Heatmap(
-        z=mat, x=xlab, y=ylab, colorscale="Blues", showscale=True, colorbar=dict(title="Count")
+        z=mat, x=xlab, y=ylab, colorscale="Blues", showscale=True, colorbar=dict(title="Value")
     ))
     fig.update_layout(template="plotly_white", margin=dict(l=60,r=10,t=10,b=40), xaxis_side="top")
     return fig
@@ -210,31 +188,33 @@ def _fig_ks(thr: List[float], cg: List[float], cb: List[float]) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=thr, y=cg, mode="lines", name="Cum Good"))
     fig.add_trace(go.Scatter(x=thr, y=cb, mode="lines", name="Cum Bad"))
-    # KS gap
     diff = np.array(cg) - np.array(cb)
-    ks = float(np.nanmax(np.abs(diff))) if len(diff) else float("nan")
-    where = int(np.nanargmax(np.abs(diff))) if len(diff) else 0
-    if len(thr) > where:
-        fig.add_trace(go.Scatter(
-            x=[thr[where], thr[where]],
-            y=[cb[where], cg[where]],
-            mode="lines",
-            name=f"KS = {ks:.3f}",
-            line=dict(dash="dash")
-        ))
+    if len(diff):
+        ks = float(np.nanmax(np.abs(diff)))
+        where = int(np.nanargmax(np.abs(diff)))
+        if len(thr) > where:
+            fig.add_trace(go.Scatter(
+                x=[thr[where], thr[where]],
+                y=[cb[where], cg[where]],
+                mode="lines",
+                name=f"KS = {ks:.3f}",
+                line=dict(dash="dash")
+            ))
     fig.update_layout(xaxis_title="Threshold", yaxis_title="Cumulative Rate", template="plotly_white",
                       margin=dict(l=40,r=10,t=10,b=40))
     return fig
 
-def _fig_thresholds(thr: List[float], series: Dict[str, List[float]]) -> go.Figure:
+def _fig_thresholds(thr: List[float], series: Dict[str, List[float]], pick: Optional[List[str]]) -> go.Figure:
     fig = go.Figure()
-    # 대표 시리즈 먼저
-    order_hint = ["tpr","fpr","precision","recall","accuracy","f1","auc","specificity"]
-    keys = sorted(series.keys(), key=lambda k: (order_hint.index(k) if k in order_hint else 999, k))
-    for k in keys:
-        fig.add_trace(go.Scatter(x=thr, y=series[k], mode="lines", name=k))
-    fig.update_layout(xaxis_title="Threshold", yaxis_title="Metric", template="plotly_white",
-                      margin=dict(l=40,r=10,t=10,b=40), legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
+    series_keys = pick if (pick and len(pick) > 0) else sorted(series.keys())
+    for k in series_keys:
+        if k in series:
+            fig.add_trace(go.Scatter(x=thr, y=series[k], mode="lines", name=k))
+    fig.update_layout(
+        xaxis_title="Threshold", yaxis_title="Metric", template="plotly_white",
+        margin=dict(l=40,r=10,t=10,b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0)
+    )
     return fig
 
 # -----------------------
@@ -258,6 +238,12 @@ layout = dbc.Container([
             ], className="g-2"),
             dbc.Row([
                 dbc.Col(dbc.Select(id="results-model-dropdown", options=[], placeholder="Select model family"), md=4),
+                dbc.Col(dbc.Checklist(
+                    id="results-conf-norm",
+                    options=[{"label": "Row-normalize confusion", "value": "row"}],
+                    value=[]
+                ), md="auto"),
+                dbc.Col(dcc.Dropdown(id="results-thr-metrics", multi=True, placeholder="Threshold: choose metrics"), md=6),
             ], className="g-2 mt-2"),
         ])
     ], className="mb-3"),
@@ -349,7 +335,7 @@ def _fetch_run(run_id, preselected):
 def _save_model_selected(v):
     return v
 
-# 5) Summary / Metrics / Curves 렌더 (차트 포함)
+# 5) Summary / Metrics / Curves + (Threshold metrics 옵션/기본값) 렌더
 @callback(
     Output("results-summary", "children"),
     Output("results-metrics", "children"),
@@ -358,13 +344,17 @@ def _save_model_selected(v):
     Output("results-confusion", "children"),
     Output("results-ks", "children"),
     Output("results-threshold", "children"),
+    Output("results-thr-metrics", "options"),
+    Output("results-thr-metrics", "value"),
     Input("results-run", "data"),
     Input("results-model-selected", "data"),
+    Input("results-conf-norm", "value"),
+    State("results-thr-metrics", "value"),
 )
-def _render_all(run, model):
+def _render_all(run, model, norm_flags, thr_pick):
     if not run:
         empty = dbc.Alert("Select a run and model", color="light", className="py-2")
-        return empty, empty, empty, empty, empty, empty, empty
+        return empty, empty, empty, empty, empty, empty, empty, [], no_update
 
     run_id = run.get("id") or "-"
     status = run.get("status")
@@ -389,52 +379,61 @@ def _render_all(run, model):
     metrics = run.get("metrics") or {}
     metrics_block = _metrics_table(metrics) if metrics else dbc.Alert("No metrics logged.", color="secondary", className="py-2")
 
-    # 차트들
+    # 기본 안내
     if not model:
         empty = dbc.Alert("Select a run and model", color="light", className="py-2")
-        return summary, metrics_block, empty, empty, empty, empty, empty
+        return summary, metrics_block, empty, empty, empty, empty, empty, [], no_update
 
     # ROC
-    roc_json = _try_get_json(run_id, f"models/{model}/curves/roc.json")
-    roc_children = dbc.Alert("Select a run and model", color="light", className="py-2")
-    pr_children = roc_children
-    conf_children = roc_children
-    ks_children = roc_children
-    thr_children = roc_children
-
-    # ROC
-    parsed = _parse_roc(roc_json)
+    roc_children = dbc.Alert("No ROC curve.", color="light", className="py-2")
+    obj = _try_get_json(run_id, f"models/{model}/curves/roc.json")
+    parsed = _parse_roc(obj)
     if parsed:
         fpr, tpr = parsed
         roc_children = dcc.Graph(figure=_fig_roc(fpr, tpr), style={"height":"360px"})
 
     # PR
-    pr_json = _try_get_json(run_id, f"models/{model}/curves/pr.json")
-    parsed = _parse_pr(pr_json)
+    pr_children = dbc.Alert("No PR curve.", color="light", className="py-2")
+    obj = _try_get_json(run_id, f"models/{model}/curves/pr.json")
+    parsed = _parse_pr(obj)
     if parsed:
         rec, prec = parsed
         pr_children = dcc.Graph(figure=_fig_pr(rec, prec), style={"height":"360px"})
 
     # Confusion
-    conf_json = _try_get_json(run_id, f"models/{model}/confusion.json")
-    parsed = _parse_confusion(conf_json)
+    conf_children = dbc.Alert("No confusion matrix.", color="light", className="py-2")
+    obj = _try_get_json(run_id, f"models/{model}/confusion.json")
+    parsed = _parse_confusion(obj)
     if parsed:
         xlab, ylab, mat = parsed
+        if norm_flags and "row" in norm_flags:
+            mat = _row_normalize(mat)
         conf_children = dcc.Graph(figure=_fig_confusion(xlab, ylab, mat), style={"height":"420px"})
 
     # KS
-    ks_json = _try_get_json(run_id, f"models/{model}/curves/ks.json")
-    parsed = _parse_ks(ks_json)
+    ks_children = dbc.Alert("No KS curve.", color="light", className="py-2")
+    obj = _try_get_json(run_id, f"models/{model}/curves/ks.json")
+    parsed = _parse_ks(obj)
     if parsed:
         thr, cg, cb = parsed
         ks_children = dcc.Graph(figure=_fig_ks(thr, cg, cb), style={"height":"360px"})
 
-    # Threshold sweep
-    thr_json = _try_get_json(run_id, f"models/{model}/thresholds.json")
-    parsed = _parse_thresholds(thr_json)
+    # Threshold sweep (+ 옵션/기본값)
+    thr_children = dbc.Alert("No threshold sweep.", color="light", className="py-2")
+    thr_opts: List[Dict[str, str]] = []
+    thr_val = thr_pick
+    obj = _try_get_json(run_id, f"models/{model}/thresholds.json")
+    parsed = _parse_thresholds(obj)
     if parsed:
         thr, series = parsed
         if series:
-            thr_children = dcc.Graph(figure=_fig_thresholds(thr, series), style={"height":"380px"})
+            keys_sorted = sorted(series.keys())
+            thr_opts = [{"label": k, "value": k} for k in keys_sorted]
+            # value가 비어있으면 대표 메트릭으로 기본 선택
+            default_pref = ["tpr", "fpr", "precision", "recall", "accuracy", "f1", "auc"]
+            if not thr_pick:
+                pick = [k for k in default_pref if k in keys_sorted] or keys_sorted[: min(3, len(keys_sorted))]
+                thr_val = pick
+            thr_children = dcc.Graph(figure=_fig_thresholds(thr, series, thr_val), style={"height":"380px"})
 
-    return summary, metrics_block, roc_children, pr_children, conf_children, ks_children, thr_children
+    return summary, metrics_block, roc_children, pr_children, conf_children, ks_children, thr_children, thr_opts, thr_val
