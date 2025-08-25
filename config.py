@@ -1,14 +1,15 @@
 # backend/app/config.py
 
 from __future__ import annotations
-from pydantic import BaseSettings, Field, AnyHttpUrl
 from typing import List, Optional
+from pydantic import AnyHttpUrl
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     # ── API / CORS ────────────────────────────────────────────────
     API_BASE: str = "/api"
-    CORS_ORIGINS: List[str] = Field(default_factory=lambda: ["*"])
+    CORS_ORIGINS: List[str] = ["*"]
 
     # ── DB (PostgreSQL) ──────────────────────────────────────────
     # 예: postgresql+psycopg2://ml:ml@127.0.0.1:5432/vml?sslmode=disable
@@ -40,9 +41,12 @@ class Settings(BaseSettings):
     WORKER_RESERVE_CPU: int = 4
     USER_MAX_CONCURRENT: int = 3
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    # Pydantic v2 설정
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
 
 settings = Settings()
