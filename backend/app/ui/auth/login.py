@@ -1,7 +1,7 @@
 # backend/app/ui/auth/login.py
 
+import json
 import urllib.parse as up
-
 import dash
 from dash import html, dcc, callback, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
@@ -10,81 +10,77 @@ from app.ui.clients import api_client as api
 
 dash.register_page(__name__, path="/auth/login", name="Login")
 
-_layout_form = dbc.Card(
+_layout_card = dbc.Card(
     [
-        dbc.CardHeader("Sign in"),
+        dbc.CardHeader(html.H5("Sign in")),
         dbc.CardBody(
             [
-                dbc.Alert(id="_auth_message", color="info", is_open=False),
-                dbc.Input(id="_auth_username", placeholder="Username", type="text", className="mb-2"),
-                dbc.Input(id="_auth_password", placeholder="Password", type="password", className="mb-3"),
-                dbc.Button("Login", id="_auth_submit", color="primary", className="w-100"),
-                html.Small(
-                    "세션은 비활성 10분 후 만료됩니다. 상단 우측 'Extend 10m'로 연장할 수 있어요.",
-                    className="text-muted d-block mt-3",
-                ),
+                dbc.Alert(id="_auth_message", color="danger", is_open=False, class_name="py-2"),
+                dbc.Input(id="_auth_username", placeholder="Username", type="text", class_name="mb-2"),
+                dbc.Input(id="_auth_password", placeholder="Password", type="password", class_name="mb-2"),
+                dbc.Button("Login", id="_auth_submit", color="primary", class_name="w-100"),
             ]
         ),
+        dbc.CardFooter(
+            html.Small("You will be redirected to your target page after login.", className="text-muted")
+        ),
     ],
-    class_name="mx-auto",
-    style={"maxWidth": "420px"},
+    class_name="shadow-sm",
 )
 
 layout = dbc.Container(
     [
-        dcc.Location(id="_auth_location"),
+        dcc.Location(id="_auth_loc"),
         dcc.Location(id="_auth_redirection"),
-        _layout_form,
+        dbc.Row(
+            dbc.Col(_layout_card, md=4),
+            class_name="justify-content-center mt-5",
+        ),
     ],
     fluid=True,
-    class_name="py-5",
 )
 
-# 이미 로그인 상태면 next 또는 홈으로 이동
-@callback(
-    Output("_auth_redirection", "href"),
-    Input("gs-auth", "data"),
-    State("_auth_location", "href"),
-    prevent_initial_call=False,
-)
-def _already_logged_in(auth, href):
-    if not auth or not auth.get("access_token"):
-        return no_update
-    next_path = "/"
-    if href:
-        q = up.urlparse(href).query
-        params = dict(up.parse_qsl(q, keep_blank_values=True))
-        next_path = params.get("next") or "/"
-    return next_path
+# 로그인 성공 시 리다이렉트 경로 계산 (next 파라미터)
+def _next_from_search(search: str | None) -> str:
+    if not search:
+        return "/"
+    qs = dict(up.parse_qsl((search or "").lstrip("?"), keep_blank_values=True))
+    nxt = qs.get("next") or "/"
+    # 보안상 절대경로만 허용(외부 URL 차단)
+    if not str(nxt).startswith("/"):
+        return "/"
+    return nxt
 
-# 로그인 요청
-#  - allow_duplicate=True: app.py의 로그아웃/연장 콜백과 함께 gs-auth.data를 갱신해도 허용
+
 @callback(
+    Output("_auth_message", "children"),
+    Output("_auth_message", "is_open"),
     Output("gs-auth", "data", allow_duplicate=True),
     Output("_auth_redirection", "href"),
-    Output("_auth_message", "is_open"),
-    Output("_auth_message", "children"),
     Input("_auth_submit", "n_clicks"),
     State("_auth_username", "value"),
     State("_auth_password", "value"),
-    State("_auth_location", "href"),
+    State("_auth_loc", "search"),
     prevent_initial_call=True,
 )
-def _do_login(n, username, password, href):
+def _do_login(n, username, password, search):
     if not n:
         return no_update, no_update, no_update, no_update
+    if not username or not password:
+        return "Please enter username & password.", True, no_update, no_update
     try:
-        res = api.login(username or "", password or "")
-        auth = {
-            "access_token": res.get("access_token"),
-            "user": res.get("user"),
-            "ip": res.get("ip"),
-        }
-        next_path = "/"
-        if href:
-            q = up.urlparse(href).query
-            params = dict(up.parse_qsl(q, keep_blank_values=True))
-            next_path = params.get("next") or "/"
-        return auth, next_path, False, no_update
+        # 서버에 로그인 요청 (IP는 서버가 채워서 반환)
+        res = api.login(username=username.strip(), password=password)
+        token = res.get("access_token")
+        user = res.get("user")
+        ip   = res.get("ip")
+        if not token:
+            return "Login failed: no token.", True, no_update, no_update
+
+        # 세션 저장
+        auth_data = {"access_token": token, "user": user, "ip": ip}
+        # next 계산 후 이동
+        target = _next_from_search(search)
+        return no_update, False, auth_data, target
     except Exception as e:
-        return no_update, no_update, True, f"로그인 실패: {e}"
+        return f"Login failed: {e}", True, no_update, no_update
