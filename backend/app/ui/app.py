@@ -6,13 +6,12 @@ import dash_bootstrap_components as dbc
 
 # 전역 Store: 로그인/프로젝트/디자인 상태 (세션 스토리지)
 GLOBAL_STORES = [
-    dcc.Store(id="gs-auth", storage_type="session"),         # {"access_token": "...", "user": {..., "ip": "..."}}
-    dcc.Store(id="gs-project", storage_type="session"),      # {"id": "...", "name": "..."}
-    dcc.Store(id="gs-design-state", storage_type="session"), # 필요시 분석 설계 중간상태
+    dcc.Store(id="gs-auth", storage_type="session"),         # {"access_token":"...", "user": {..., "ip":"..."}}
+    dcc.Store(id="gs-project", storage_type="session"),
+    dcc.Store(id="gs-design-state", storage_type="session"),
 ]
 
 def _user_badge():
-    # 내용은 콜백으로 채움
     return html.Span(id="nav-user-badge")
 
 def _ip_badge():
@@ -22,7 +21,6 @@ def _logout_button():
     return dbc.Button("Logout", id="nav-logout", color="light", size="sm", className="ms-3")
 
 def _extend_toast():
-    # 유휴 만료 경고 토스트 (is_open은 콜백에서 제어)
     return dbc.Toast(
         [
             html.Div("Session will expire soon.", className="fw-semibold mb-1"),
@@ -50,10 +48,9 @@ def build_dash_app() -> dash.Dash:
     app.layout = dbc.Container(
         [
             dcc.Location(id="_page_location"),
-            dcc.Location(id="_auth_redirect"),   # 리다이렉트용 (href만 갱신)
+            dcc.Location(id="_auth_redirect"),
             *GLOBAL_STORES,
 
-            # 상단 네비게이션
             dbc.Navbar(
                 dbc.Container(
                     [
@@ -69,7 +66,6 @@ def build_dash_app() -> dash.Dash:
                             navbar=True,
                             className="me-auto",
                         ),
-                        # 우측 사용자/아이피/로그아웃
                         dbc.Nav(
                             [
                                 dbc.NavItem(_user_badge()),
@@ -87,48 +83,19 @@ def build_dash_app() -> dash.Dash:
                 className="mb-3",
             ),
 
-            # 세션 만료 토스트 + 하트비트
             _extend_toast(),
             dcc.Interval(id="_auth_heartbeat", interval=60_000, disabled=False),
 
-            # 페이지 컨테이너
             dash.page_container,
         ],
         fluid=True,
     )
-
     return app
 
 
-# ─────────────────────────────────────────────────────────────
-# 콜백들
-# ─────────────────────────────────────────────────────────────
-
-# 1) 로그인 가드: 토큰 없으면 /auth/login 으로
-@callback(
-    Output("_auth_redirect", "href"),
-    Input("_page_location", "href"),
-    State("gs-auth", "data"),
-    prevent_initial_call=False,
-)
-def _guard_route(href, auth):
-    protected_paths = ("/analysis/design", "/analysis/train", "/analysis/results", "/analysis/compare", "/")
-    if not href:
-        return no_update
-    try:
-        # href에서 path만 떼기
-        from urllib.parse import urlparse, quote_plus
-        path = urlparse(href).path or "/"
-        token = (auth or {}).get("access_token")
-        if path.startswith(protected_paths) and not token:
-            # next 파라미터로 현재 페이지 복귀
-            return f"/auth/login?next={quote_plus(path)}"
-    except Exception:
-        pass
-    return no_update
-
-
-# 2) 네비 바 - 사용자/아이피 배지 내용 채우기
+# ─────────────────────────────────────────
+# 콜백: 네비 바 배지 (유저/아이피)
+# ─────────────────────────────────────────
 @callback(
     Output("nav-user-badge", "children"),
     Output("nav-ip-badge", "children"),
@@ -145,53 +112,65 @@ def _fill_nav_badges(auth):
     return user_badge, ip_badge
 
 
-# 3) 로그아웃: gs-auth 초기화 + 루트로 이동(가드가 로그인화면으로 보냄)
+# ─────────────────────────────────────────
+# 콜백: 라우팅(가드+로그아웃) → 유일하게 _auth_redirect.href 만 제어
+# ─────────────────────────────────────────
 @callback(
-    Output("gs-auth", "data"),
     Output("_auth_redirect", "href"),
+    Input("_page_location", "href"),
+    Input("gs-auth", "data"),      # 토큰 변화도 트리거
     Input("nav-logout", "n_clicks"),
-    prevent_initial_call=True,
+    prevent_initial_call=False,
 )
-def _logout(_n):
-    return {}, "/"
+def _nav_router(href, auth, n_logout):
+    from urllib.parse import urlparse, quote_plus
+
+    # 로그아웃 버튼이 트리거면 → 로그인 페이지로 보냄 (Store는 login.py에서 정리)
+    if dash.ctx.triggered_id == "nav-logout":
+        return "/auth/login?logout=1&next=%2F"
+
+    # 토큰 검사(보호 경로 이동 시)
+    token = (auth or {}).get("access_token")
+    path = (urlparse(href).path if href else "/") or "/"
+    protected = ("/", "/analysis/design", "/analysis/train", "/analysis/results", "/analysis/compare")
+    if path.startswith(protected) and not token:
+        return f"/auth/login?next={quote_plus(path)}"
+
+    return no_update
 
 
-# 4) 세션 만료 토스트: 남은 시간 정보를 토큰 페이로드에 넣어뒀다고 가정 (exp, now 비교)
+# ─────────────────────────────────────────
+# 콜백: 세션 만료 토스트 (하트비트 + 연장 버튼) → 유일하게 _extend_toast.is_open 제어
+# ─────────────────────────────────────────
 @callback(
     Output("_extend_toast", "is_open"),
     Input("_auth_heartbeat", "n_intervals"),
+    Input("_extend_btn", "n_clicks"),
     State("gs-auth", "data"),
+    State("_extend_toast", "is_open"),
     prevent_initial_call=False,
 )
-def _tick_heartbeat(_n, auth):
+def _toast_controller(_tick, _extend_clicks, auth, is_open):
     import time, base64, json
+
+    trig = dash.ctx.triggered_id
+
+    # 연장 버튼 클릭 → 토스트 닫기 (실제 refresh는 login.py 또는 별도 콜백에서 수행)
+    if trig == "_extend_btn":
+        return False
+
+    # 하트비트에선 토큰 exp 확인
     token = (auth or {}).get("access_token")
     if not token:
-        # 미로그인 상태에서는 토스트 숨김
-        return False
-    # JWT exp 확인 (페이크/커스텀 토큰이면 서버가 별도 user.expires_at을 내려줘도 됨)
+        return False  # 미로그인 상태는 토스트 숨김
+
     try:
-        # 매우 단순한 JWT payload 파서 (검증 목적 아님)
         payload_b64 = token.split(".")[1]
-        # padding
         payload_b64 += "=" * (-len(payload_b64) % 4)
         payload = json.loads(base64.urlsafe_b64decode(payload_b64.encode("utf-8")).decode("utf-8"))
         exp = int(payload.get("exp", 0))
         now = int(time.time())
-        # 남은 시간이 60초 미만이면 토스트 열기
+        # 남은 시간 60초 미만이면 열기, 아니면 닫기
         return (exp - now) < 60
     except Exception:
-        # 파싱 실패 시 토스트 끄기
         return False
-
-
-# 5) 연장 버튼 → /auth/refresh 호출은 프런트에서 api_client로 처리하는 대신 여기선 Store만 트리거
-#    (실제 토큰 갱신은 로그인 페이지나 각 페이지 내 별도 콜백에서 처리 가능)
-@callback(
-    Output("_extend_toast", "is_open"),
-    Input("_extend_btn", "n_clicks"),
-    prevent_initial_call=True,
-)
-def _extend_now(_n):
-    # 버튼 클릭 시 토스트 닫고, 각 페이지에서 실제 refresh 호출 처리(이미 구현돼 있다면 거기 재사용)
-    return False
