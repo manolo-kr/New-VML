@@ -1,13 +1,25 @@
 # backend/app/ui/auth/guard.py
 
 from __future__ import annotations
-import dash
-from dash import dcc, html, callback, Input, Output, State, no_update
+from dash import html, dcc
+import dash_bootstrap_components as dbc
 
-# 내부 허용 모드에서는 가드가 noop 이지만, 토큰 필요 모드로 전환 시 이 페이지로 리다이렉트 구성 가능
-dash.register_page(__name__, path="/auth/guard", name="Guard")
+def require_auth(children, message: str = "Login required."):
+    """
+    페이지 상단에 붙여서 gs-auth 가 비어 있을 때 로그인 페이지 안내를 보여주는 가드 스텁.
+    (완전한 리디렉트 콜백을 두기보다, 페이지 당 include 방식으로 간단히 사용)
+    사용 예:
+        layout = dbc.Container([
+            require_auth(dash.page_container),
+        ], fluid=True)
+    """
+    return html.Div([
+        dcc.Store(id="gs-auth", storage_type="session"),
+        html.Div(id="__guard_panel"),
+        html.Div(children=children, id="__guard_content")
+    ])
 
-layout = html.Div([
-    dcc.Location(id="guard-loc"),
-    html.Div("Access guard (internal mode: pass-through)"),
-])
+# 참고:
+#  - 완전 자동 리디렉트가 필요하면, 각 페이지에서 gs-auth를 읽어 href를 /auth/login 으로 바꾸는
+#    경량 콜백을 추가하세요. (현재 프로젝트에서는 서버측 JWT 만료로 401이 나면
+#    프론트가 다시 로그인 유도 토스트를 띄우는 UX를 권장)
