@@ -1,33 +1,30 @@
 /* backend/app/assets/style.css */
 
-/* Global spacing */
-.container, .container-fluid { padding-bottom: 24px; }
-
-/* Navbar link spacing */
-.navbar .nav-link { margin-right: 8px; }
-
-/* Cards */
-.card { border-radius: 14px; }
-.card-header { font-weight: 600; }
-
-/* Tables */
-.table { font-size: 0.92rem; }
-.table thead th { white-space: nowrap; }
-.table td, .table th { vertical-align: middle; }
-
-/* Modals - wide body horizontal scroll */
-.modal .modal-body {
-  overflow-x: auto;
-  overflow-y: auto;
-  max-height: 70vh;
-  white-space: nowrap; /* for wide previews */
+:root{
+  --vm-spacing: 10px;
 }
 
-/* Badges tidy */
-.badge { letter-spacing: .02em; }
+.navbar {
+  margin-bottom: 12px;
+}
 
-/* Buttons */
-.btn + .btn { margin-left: .5rem; }
+.card{
+  box-shadow: 0 2px 6px rgba(0,0,0,.05);
+  border-radius: 10px;
+}
 
-/* Alerts tighter */
-.alert { padding-top: .5rem; padding-bottom: .5rem; }
+.table{
+  font-size: 0.95rem;
+}
+
+.badge{
+  letter-spacing: .02em;
+}
+
+.upload-area{
+  border: 1px dashed #999;
+  border-radius: 6px;
+  height: 80px;
+  line-height: 80px;
+  text-align: center;
+}
