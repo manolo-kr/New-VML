@@ -72,5 +72,5 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- (선택) 기본 인덱스
-CREATE INDEX IF NOT EXISTS idx_ml_task_analysis_id ON ml_task(analysis_id);
+CREATE INDEX IF NOT EXISTS idx_ml_task_analysis_id ON mltask(analysis_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_project_id ON analysis(project_id);
