@@ -4,15 +4,13 @@ import dash
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 
-# 전역 Store: 로그인 상태, 현재 프로젝트, 디자인 상태 등
 GLOBAL_STORES = [
-    dcc.Store(id="gs-auth", storage_type="session"),       # {"access_token": "...", "user": {...}}
-    dcc.Store(id="gs-project", storage_type="session"),    # {"id": "...", "name": "..."}
-    dcc.Store(id="gs-design-state", storage_type="session"), # {"analysis_id": "...", ...}
+    dcc.Store(id="gs-auth", storage_type="session"),
+    dcc.Store(id="gs-project", storage_type="session"),
+    dcc.Store(id="gs-design-state", storage_type="session"),
 ]
 
 def build_dash_app() -> dash.Dash:
-    """Dash 앱 팩토리"""
     app = dash.Dash(
         __name__,
         use_pages=True,
@@ -23,8 +21,10 @@ def build_dash_app() -> dash.Dash:
 
     app.layout = dbc.Container([
         dcc.Location(id="_page_location"),
-        dcc.Store(id="_page_store"),   # 내부 라우팅용
+        dcc.Store(id="_page_store"),
         *GLOBAL_STORES,
+
+        dcc.Interval(id="auth-keepalive-global", interval=30_000, n_intervals=0),
 
         dbc.NavbarSimple(
             brand="Visual ML",
@@ -37,10 +37,22 @@ def build_dash_app() -> dash.Dash:
                 dbc.NavItem(dcc.Link("Train", href="/analysis/train", className="nav-link")),
                 dbc.NavItem(dcc.Link("Results", href="/analysis/results", className="nav-link")),
                 dbc.NavItem(dcc.Link("Compare", href="/analysis/compare", className="nav-link")),
+                dbc.NavItem(dcc.Link("Login", href="/login", className="nav-link")),
             ]
         ),
 
         dash.page_container
     ], fluid=True)
+
+    @app.callback(
+        dash.Output("._dummy", "children", allow_duplicate=True),
+        dash.Input("auth-keepalive-global", "n_intervals"),
+        dash.State("gs-auth", "data"),
+        prevent_initial_call=True
+    )
+    def _keepalive_global(_n, auth_bundle):
+        from app.ui.clients import api_client as api
+        api.set_auth(auth_bundle or {})
+        return dash.no_update
 
     return app
