@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 from typing import Dict, Any, List
+import json
 import urllib.parse as up
 
 import dash
 from dash import html, dcc, callback, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
+import plotly.graph_objs as go
 
 from app.ui.clients import api_client as api
 
@@ -14,212 +16,155 @@ dash.register_page(__name__, path="/analysis/results", name="Results")
 
 layout = dbc.Container([
     dcc.Location(id="results-url"),
-    dcc.Store(id="gs-auth", storage_type="session"),
     dcc.Store(id="results-run-id"),
     dcc.Store(id="results-model-key"),
 
     html.H2("Results"),
 
     dbc.Row([
-        dbc.Col(dbc.Input(id="results-run-input", placeholder="Run ID", type="text"), md=4),
-        dbc.Col(dbc.Button("Load", id="results-load", color="primary"), width="auto"),
-        dbc.Col(dbc.Select(id="results-model-select", options=[], placeholder="Select model"), md=4),
+        dbc.Col(dbc.InputGroup([
+            dbc.InputGroupText("Run ID"),
+            dbc.Input(id="results-run-input", placeholder="Enter run id", type="text"),
+            dbc.Button("Load", id="results-load", color="primary")
+        ]), md=8),
+        dbc.Col(dbc.InputGroup([
+            dbc.InputGroupText("Model"),
+            dbc.Input(id="results-model-input", placeholder="e.g. xgboost", type="text"),
+        ]), md=4),
     ], className="g-2 mb-3"),
 
-    dbc.Tabs([
-        dbc.Tab(label="Metrics", tab_id="tab-metrics", children=html.Div(id="results-metrics", className="p-3")),
-        dbc.Tab(label="Curves",  tab_id="tab-curves",  children=html.Div(id="results-curves",  className="p-3")),
-        dbc.Tab(label="Confusion", tab_id="tab-conf", children=html.Div(id="results-conf",    className="p-3")),
-        dbc.Tab(label="KS / Gain / Lift", tab_id="tab-ks", children=html.Div(id="results-ks", className="p-3")),
-        dbc.Tab(label="Threshold sweep", tab_id="tab-th", children=html.Div(id="results-th",  className="p-3")),
-    ], id="results-tabs", active_tab="tab-metrics"),
+    dbc.Row([
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Metrics"),
+            dbc.CardBody(html.Div(id="results-metrics"))
+        ]), md=4),
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Threshold sweep"),
+            dbc.CardBody(dcc.Graph(id="results-thres-graph"))
+        ]), md=8)
+    ], className="g-2 mb-3"),
+
+    dbc.Row([
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Curves"),
+            dbc.CardBody(dcc.Graph(id="results-roc-graph"))
+        ]), md=6),
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Confusion"),
+            dbc.CardBody(dcc.Graph(id="results-cm-graph"))
+        ]), md=6),
+    ], className="g-2 mb-3"),
+
+    dbc.Row([
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("KS / Gain / Lift"),
+            dbc.CardBody(dcc.Graph(id="results-ks-graph"))
+        ]))
+    ])
 ], fluid=True)
 
-
-# ---- URL init -------------------------------------------------------
+# URL → Store
 @callback(
-    Output("results-run-id", "data"),
-    Output("results-run-input", "value"),
-    Input("results-url", "href"),
+    Output("results-run-id","data"),
+    Output("results-model-key","data"),
+    Input("results-url","href"),
     prevent_initial_call=False
 )
-def _init_run(href):
-    rid = ""
-    if href:
-        q = up.urlparse(href).query
-        params = dict(up.parse_qsl(q))
-        rid = params.get("run_id") or ""
-    return rid, rid
+def _init_from_url(href):
+    if not href:
+        return None, None
+    q = up.urlparse(href).query
+    params = dict(up.parse_qsl(q, keep_blank_values=True))
+    return params.get("run_id"), params.get("model")
 
-
-# ---- Load run info & model options ---------------------------------
+# Load 버튼 → 입력 상자 → store 덮기
 @callback(
-    Output("results-model-select", "options"),
-    Output("results-model-select", "value"),
-    Input("results-load", "n_clicks"),
-    State("results-run-input", "value"),
-    State("gs-auth", "data"),
+    Output("results-run-id","data", allow_duplicate=True),
+    Output("results-model-key","data", allow_duplicate=True),
+    Input("results-load","n_clicks"),
+    State("results-run-input","value"),
+    State("results-model-input","value"),
     prevent_initial_call=True
 )
-def _load_models(_n, run_id, auth):
-    token = (auth or {}).get("access_token")
+def _manual_load(n, run_id, model):
     if not run_id:
-        return [], None
-    try:
-        models = api.list_models(run_id, token)
-        opts = [{"label": m, "value": m} for m in models]
-        return opts, (models[0] if models else None)
-    except Exception:
-        return [], None
+        return no_update, no_update
+    return run_id.strip(), (model or "").strip() or None
 
-
-# ---- Store selected model ------------------------------------------
+# Store → 결과 렌더
 @callback(
-    Output("results-model-key", "data"),
-    Input("results-model-select", "value"),
+    Output("results-metrics","children"),
+    Output("results-thres-graph","figure"),
+    Output("results-roc-graph","figure"),
+    Output("results-cm-graph","figure"),
+    Output("results-ks-graph","figure"),
+    Input("results-run-id","data"),
+    Input("results-model-key","data"),
 )
-def _sel_model(mkey):
-    return mkey
+def _render(run_id, model_key):
+    if not run_id or not model_key:
+        msg = dbc.Alert("Select a run and model to view results.", color="secondary")
+        return msg, go.Figure(), go.Figure(), go.Figure(), go.Figure()
 
-
-# ---- Metrics tab ----------------------------------------------------
-@callback(
-    Output("results-metrics", "children"),
-    Input("results-model-key", "data"),
-    State("results-run-input", "value"),
-    State("gs-auth", "data"),
-)
-def _render_metrics(model_key, run_id, auth):
-    token = (auth or {}).get("access_token")
-    if not (run_id and model_key):
-        return dbc.Alert("Select a run and model.", color="secondary")
+    # metrics.json
     try:
-        j = api.get_artifact_json(run_id, f"models/{model_key}/metrics/metrics.json", token)
+        m = api.get_artifact_json(run_id, f"models/{model_key}/metrics/metrics.json")
     except Exception:
-        return dbc.Alert("No metrics.", color="warning")
-    rows = []
-    for k, v in j.items():
-        rows.append(html.Tr([html.Td(k), html.Td(str(v))]))
-    return dbc.Table([html.Thead(html.Tr([html.Th("metric"), html.Th("value")])), html.Tbody(rows)],
-                     bordered=True, hover=True, responsive=True)
+        m = {}
+    metrics_list = []
+    for k, v in (m or {}).items():
+        metrics_list.append(html.Div(f"{k}: {v}"))
+    metrics_dom = html.Div(metrics_list) if metrics_list else html.Small("No metrics.", className="text-muted")
 
-
-# ---- Curves tab (ROC / PR) -----------------------------------------
-@callback(
-    Output("results-curves", "children"),
-    Input("results-model-key", "data"),
-    State("results-run-input", "value"),
-    State("gs-auth", "data"),
-)
-def _render_curves(model_key, run_id, auth):
-    token = (auth or {}).get("access_token")
-    if not (run_id and model_key):
-        return dbc.Alert("Select a run and model.", color="secondary")
-    parts: List[html.Div] = []
-
+    # threshold_sweep.json
     try:
-        roc = api.get_artifact_json(run_id, f"models/{model_key}/curves/roc.json", token)
-        roc_rows = [html.Tr([html.Td(str(t)), html.Td(str(p))]) for t, p in zip(roc.get("fpr",[]), roc.get("tpr",[]))]
-        parts.append(dbc.Card([
-            dbc.CardHeader("ROC"),
-            dbc.CardBody(dbc.Table([html.Thead(html.Tr([html.Th("fpr"), html.Th("tpr")])),
-                                    html.Tbody(roc_rows)], bordered=True, hover=True, responsive=True))
-        ], className="mb-3"))
+        sweep = api.get_artifact_json(run_id, f"models/{model_key}/metrics/threshold_sweep.json")
     except Exception:
-        parts.append(dbc.Alert("No ROC curve.", color="warning"))
+        sweep = None
+    thres_fig = go.Figure()
+    if isinstance(sweep, dict) and "thresholds" in sweep and "tpr" in sweep and "fpr" in sweep:
+        thres_fig.add_trace(go.Scatter(x=sweep["thresholds"], y=sweep["tpr"], mode="lines", name="TPR"))
+        thres_fig.add_trace(go.Scatter(x=sweep["thresholds"], y=sweep["fpr"], mode="lines", name="FPR"))
+        thres_fig.update_layout(margin=dict(l=10,r=10,t=10,b=10))
 
+    # roc.json
     try:
-        pr = api.get_artifact_json(run_id, f"models/{model_key}/curves/pr.json", token)
-        pr_rows = [html.Tr([html.Td(str(p)), html.Td(str(r))]) for p, r in zip(pr.get("precision",[]), pr.get("recall",[]))]
-        parts.append(dbc.Card([
-            dbc.CardHeader("PR"),
-            dbc.CardBody(dbc.Table([html.Thead(html.Tr([html.Th("precision"), html.Th("recall")])),
-                                    html.Tbody(pr_rows)], bordered=True, hover=True, responsive=True))
-        ]))
+        roc = api.get_artifact_json(run_id, f"models/{model_key}/curves/roc.json")
     except Exception:
-        parts.append(dbc.Alert("No PR curve.", color="warning"))
+        roc = None
+    roc_fig = go.Figure()
+    if isinstance(roc, dict) and "fpr" in roc and "tpr" in roc:
+        roc_fig.add_trace(go.Scatter(x=roc["fpr"], y=roc["tpr"], mode="lines", name="ROC"))
+        roc_fig.add_trace(go.Scatter(x=[0,1], y=[0,1], mode="lines", name="random", line=dict(dash="dash")))
+        roc_fig.update_layout(margin=dict(l=10,r=10,t=10,b=10))
 
-    return html.Div(parts)
-
-
-# ---- Confusion tab --------------------------------------------------
-@callback(
-    Output("results-conf", "children"),
-    Input("results-model-key", "data"),
-    State("results-run-input", "value"),
-    State("gs-auth", "data"),
-)
-def _render_conf(model_key, run_id, auth):
-    token = (auth or {}).get("access_token")
-    if not (run_id and model_key):
-        return dbc.Alert("Select a run and model.", color="secondary")
+    # confusion.json
     try:
-        cm = api.get_artifact_json(run_id, f"models/{model_key}/confusion/confusion.json", token)
+        cm = api.get_artifact_json(run_id, f"models/{model_key}/confusion/confusion.json")
     except Exception:
-        return dbc.Alert("No confusion matrix.", color="warning")
-    labels = cm.get("labels", [])
-    mat = cm.get("matrix", [])
-    thead = html.Thead(html.Tr([html.Th("")] + [html.Th(f"pred:{l}") for l in labels]))
-    body_rows = []
-    for i, row in enumerate(mat):
-        body_rows.append(html.Tr([html.Td(f"true:{labels[i]}")] + [html.Td(str(v)) for v in row]))
-    return dbc.Table([thead, html.Tbody(body_rows)], bordered=True, hover=True, responsive=True)
+        cm = None
+    cm_fig = go.Figure()
+    if isinstance(cm, dict) and "matrix" in cm and "labels" in cm:
+        z = cm["matrix"]
+        cm_fig.add_trace(go.Heatmap(z=z, x=cm["labels"], y=cm["labels"], showscale=True))
+        cm_fig.update_layout(margin=dict(l=10,r=10,t=30,b=10))
 
+    # ks_gain_lift.json
+    try:
+        kgl = api.get_artifact_json(run_id, f"models/{model_key}/metrics/ks_gain_lift.json")
+    except Exception:
+        kgl = None
+    ks_fig = go.Figure()
+    if isinstance(kgl, dict):
+        if "ks" in kgl:
+            ks = kgl["ks"]
+            ks_fig.add_trace(go.Scatter(x=ks.get("x", []), y=ks.get("y", []), mode="lines", name="KS"))
+        if "gain" in kgl:
+            g = kgl["gain"]
+            ks_fig.add_trace(go.Scatter(x=g.get("x", []), y=g.get("y", []), mode="lines", name="Gain"))
+        if "lift" in kgl:
+            lf = kgl["lift"]
+            ks_fig.add_trace(go.Scatter(x=lf.get("x", []), y=lf.get("y", []), mode="lines", name="Lift"))
+        ks_fig.update_layout(margin=dict(l=10,r=10,t=10,b=10))
 
-# ---- KS/Gain/Lift tab ----------------------------------------------
-@callback(
-    Output("results-ks", "children"),
-    Input("results-model-key", "data"),
-    State("results-run-input", "value"),
-    State("gs-auth", "data"),
-)
-def _render_ks(model_key, run_id, auth):
-    token = (auth or {}).get("access_token")
-    if not (run_id and model_key):
-        return dbc.Alert("Select a run and model.", color="secondary")
-    cards = []
-    # KS
-    try:
-        ks = api.get_artifact_json(run_id, f"models/{model_key}/curves/ks.json", token)
-        rows = [html.Tr([html.Td(str(x)), html.Td(str(y))]) for x, y in zip(ks.get("x",[]), ks.get("y",[]))]
-        cards.append(dbc.Card([dbc.CardHeader("KS"), dbc.CardBody(dbc.Table([html.Thead(html.Tr([html.Th("x"), html.Th("y")])),
-                                                                            html.Tbody(rows)], bordered=True, hover=True, responsive=True))], className="mb-3"))
-    except Exception:
-        cards.append(dbc.Alert("No KS.", color="warning"))
-    # Gain
-    try:
-        gain = api.get_artifact_json(run_id, f"models/{model_key}/curves/gain.json", token)
-        rows = [html.Tr([html.Td(str(x)), html.Td(str(y))]) for x, y in zip(gain.get("x",[]), gain.get("y",[]))]
-        cards.append(dbc.Card([dbc.CardHeader("Gain"), dbc.CardBody(dbc.Table([html.Thead(html.Tr([html.Th("x"), html.Th("y")])),
-                                                                               html.Tbody(rows)], bordered=True, hover=True, responsive=True))], className="mb-3"))
-    except Exception:
-        cards.append(dbc.Alert("No Gain.", color="warning"))
-    # Lift
-    try:
-        lift = api.get_artifact_json(run_id, f"models/{model_key}/curves/lift.json", token)
-        rows = [html.Tr([html.Td(str(x)), html.Td(str(y))]) for x, y in zip(lift.get("x",[]), lift.get("y",[]))]
-        cards.append(dbc.Card([dbc.CardHeader("Lift"), dbc.CardBody(dbc.Table([html.Thead(html.Tr([html.Th("x"), html.Th("y")])),
-                                                                               html.Tbody(rows)], bordered=True, hover=True, responsive=True))]))
-    except Exception:
-        cards.append(dbc.Alert("No Lift.", color="warning"))
-    return html.Div(cards)
-
-
-# ---- Threshold sweep tab -------------------------------------------
-@callback(
-    Output("results-th", "children"),
-    Input("results-model-key", "data"),
-    State("results-run-input", "value"),
-    State("gs-auth", "data"),
-)
-def _render_th(model_key, run_id, auth):
-    token = (auth or {}).get("access_token")
-    if not (run_id and model_key):
-        return dbc.Alert("Select a run and model.", color="secondary")
-    try:
-        th = api.get_artifact_json(run_id, f"models/{model_key}/metrics/thresholds.json", token)
-    except Exception:
-        return dbc.Alert("No threshold sweep.", color="warning")
-    head = html.Thead(html.Tr([html.Th(k) for k in th["columns"]]))
-    body = html.Tbody([html.Tr([html.Td(str(v)) for v in row]) for row in th["rows"]])
-    return dbc.Table([head, body], bordered=True, hover=True, responsive=True)
+    return metrics_dom, thres_fig, roc_fig, cm_fig, ks_fig
