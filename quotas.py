@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 from typing import Optional
+from .config import (
+    USER_MAX_CONCURRENT, USER_MAX_QUEUED,
+    GLOBAL_MAX_CONCURRENT, GLOBAL_MAX_QUEUED
+)
 
-# 내부 허용 모드: 항상 허용
-def can_enqueue_for_user(user_id: Optional[str], current_active: int, user_limit: int) -> bool:
+def can_enqueue(user_id: Optional[str]) -> bool:
+    """
+    현재는 하드 제한만 스텁. (실사용은 Mongo 상태 카운팅으로 보완)
+    """
     return True
-
-def can_worker_start_job(current_running: int, max_parallel: int) -> bool:
-    return current_running < max_parallel
