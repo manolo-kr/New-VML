@@ -2,6 +2,7 @@
 
 import json
 import urllib.parse as up
+from datetime import datetime
 
 import dash
 from dash import html, dcc, callback, Input, Output, State, no_update
@@ -9,68 +10,80 @@ import dash_bootstrap_components as dbc
 
 from app.ui.clients import api_client as api
 
-# ✅ app 생성 이후(app.ui.app.build_dash_app 내부) import 되도록!
 dash.register_page(__name__, path="/auth/login", name="Login")
 
-_layout_form = dbc.Card(
-    dbc.CardBody([
-        html.H4("Sign in", className="mb-3"),
-
-        dbc.Form([
-            dbc.Label("User ID", html_for="login-username"),
-            dbc.Input(id="login-username", placeholder="your id", autoComplete="username"),
-            dbc.Label("Password", className="mt-3", html_for="login-password"),
-            dbc.Input(id="login-password", placeholder="••••••••", type="password", autoComplete="current-password"),
-            dbc.Button("Login", id="login-submit", color="primary", className="mt-3", n_clicks=0),
+def _card():
+    return dbc.Card([
+        dbc.CardHeader(html.H5("Sign in")),
+        dbc.CardBody([
+            dbc.Alert(id="_auth_message", is_open=False, color="danger", class_name="py-2 mb-3"),
+            dbc.Input(id="login-username", placeholder="Username", type="text", class_name="mb-2"),
+            dbc.Input(id="login-password", placeholder="Password", type="password", class_name="mb-2"),
+            dbc.Button("Login", id="btn-login", color="primary", class_name="w-100"),
+            html.Div(
+                dcc.Link("Back to Home", href="/", className="d-block text-center mt-3"),
+            ),
         ]),
-
-        html.Div(id="login-alert", className="mt-3"),
-        # 리다이렉트용 Location (이 페이지 내부 전용 id → 중복 없음)
-        dcc.Location(id="login-redirect"),
-    ])
-)
+    ], class_name="shadow-sm")
 
 layout = dbc.Container([
-    dcc.Location(id="login-url"),  # ?next=/... 파라미터 읽기용
-    _layout_form
+    dcc.Location(id="login-url"),
+    # 로그인 성공 시 페이지 이동
+    dcc.Location(id="_auth_redirect", refresh=True),
+    # NOTE: gs-auth Store 는 app.layout(Global Stores)에서 생성됨. 여기서는 값만 쓴다.
+    dbc.Row([
+        dbc.Col([], md=3),
+        dbc.Col(_card(), md=6),
+        dbc.Col([], md=3),
+    ], class_name="mt-5"),
 ], fluid=True)
-
 
 @callback(
     Output("gs-auth", "data"),
-    Output("login-alert", "children"),
-    Output("login-redirect", "href"),
-    Input("login-submit", "n_clicks"),
+    Output("_auth_redirect", "href"),
+    Output("_auth_message", "children"),
+    Output("_auth_message", "is_open"),
+    Input("btn-login", "n_clicks"),
     State("login-username", "value"),
     State("login-password", "value"),
     State("login-url", "href"),
-    prevent_initial_call=True
+    prevent_initial_call=True,
 )
 def _do_login(n, username, password, href):
     if not n:
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
 
     username = (username or "").strip()
     password = (password or "").strip()
     if not username or not password:
-        return no_update, dbc.Alert("Please enter both ID and password.", color="warning"), no_update
+        return no_update, no_update, "Please enter username and password.", True
 
     try:
-        resp = api.login(username, password)  # {"access_token": "...", "user": {...}}
-        token = resp.get("access_token")
+        # 백엔드 로그인 시도
+        resp = api.login(username=username, password=password)
+        access_token = resp.get("access_token")
         user = resp.get("user") or {}
-        if not token:
-            raise ValueError("No token returned")
+        if not access_token:
+            raise ValueError("No access_token in response")
 
-        # next 파라미터 해석
+        # 모듈 전역 토큰 설정 (이후 API 호출 자동 Authorization 부착)
+        api.set_auth(access_token)
+
+        # next 파라미터 추출(없으면 '/')
         next_href = "/"
         if href:
             q = up.urlparse(href).query
             params = dict(up.parse_qsl(q, keep_blank_values=True))
-            if params.get("next"):
-                next_href = params["next"]
+            nxt = params.get("next")
+            if nxt:
+                next_href = nxt
 
-        return {"access_token": token, "user": user}, dbc.Alert("Login success.", color="success"), next_href
+        gs = {
+            "access_token": access_token,
+            "user": user,
+            "login_at": datetime.utcnow().isoformat() + "Z",
+        }
+        return gs, next_href, no_update, False
 
     except Exception as e:
-        return no_update, dbc.Alert(f"Login failed: {e}", color="danger"), no_update
+        return no_update, no_update, f"Login failed: {e}", True
