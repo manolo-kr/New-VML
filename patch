@@ -74,3 +74,9 @@ CREATE TABLE IF NOT EXISTS users (
 -- (선택) 기본 인덱스
 CREATE INDEX IF NOT EXISTS idx_ml_task_analysis_id ON mltask(analysis_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_project_id ON analysis(project_id);
+
+ALTER TABLE mltask
+  ALTER COLUMN split TYPE jsonb USING split::jsonb;
+
+ALTER TABLE mltask
+  ALTER COLUMN model_params TYPE jsonb USING model_params::jsonb;
