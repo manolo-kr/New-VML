@@ -1,6 +1,5 @@
 # backend/app/ui/auth/login.py
 
-import json
 import urllib.parse as up
 from datetime import datetime
 
@@ -18,24 +17,16 @@ def _card():
         dbc.CardBody([
             dbc.Alert(id="_auth_message", is_open=False, color="danger", class_name="py-2 mb-3"),
             dbc.Input(id="login-username", placeholder="Username", type="text", class_name="mb-2"),
-            dbc.Input(id="login-password", placeholder="Password", type="password", class_name="mb-2"),
+            dbc.Input(id="login-password", placeholder="Password", type="password", class_name="mb-3"),
             dbc.Button("Login", id="btn-login", color="primary", class_name="w-100"),
-            html.Div(
-                dcc.Link("Back to Home", href="/", className="d-block text-center mt-3"),
-            ),
+            html.Div(dcc.Link("Back to Home", href="/", className="d-block text-center mt-3")),
         ]),
     ], class_name="shadow-sm")
 
 layout = dbc.Container([
     dcc.Location(id="login-url"),
-    # 로그인 성공 시 페이지 이동
-    dcc.Location(id="_auth_redirect", refresh=True),
-    # NOTE: gs-auth Store 는 app.layout(Global Stores)에서 생성됨. 여기서는 값만 쓴다.
-    dbc.Row([
-        dbc.Col([], md=3),
-        dbc.Col(_card(), md=6),
-        dbc.Col([], md=3),
-    ], class_name="mt-5"),
+    dcc.Location(id="_auth_redirect", refresh=True),  # ← app.py의 가드와 분리된 Location
+    dbc.Row([dbc.Col([], md=3), dbc.Col(_card(), md=6), dbc.Col([], md=3)], class_name="mt-5"),
 ], fluid=True)
 
 @callback(
@@ -59,17 +50,16 @@ def _do_login(n, username, password, href):
         return no_update, no_update, "Please enter username and password.", True
 
     try:
-        # 백엔드 로그인 시도
         resp = api.login(username=username, password=password)
         access_token = resp.get("access_token")
         user = resp.get("user") or {}
         if not access_token:
             raise ValueError("No access_token in response")
 
-        # 모듈 전역 토큰 설정 (이후 API 호출 자동 Authorization 부착)
+        # 전역 헤더세팅
         api.set_auth(access_token)
 
-        # next 파라미터 추출(없으면 '/')
+        # next 파라미터
         next_href = "/"
         if href:
             q = up.urlparse(href).query
@@ -78,11 +68,7 @@ def _do_login(n, username, password, href):
             if nxt:
                 next_href = nxt
 
-        gs = {
-            "access_token": access_token,
-            "user": user,
-            "login_at": datetime.utcnow().isoformat() + "Z",
-        }
+        gs = {"access_token": access_token, "user": user, "login_at": datetime.utcnow().isoformat() + "Z"}
         return gs, next_href, no_update, False
 
     except Exception as e:
